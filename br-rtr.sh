@@ -1,7 +1,8 @@
 #!/bin/bash
 # BR-RTR (Linux), модуль 1
 # enp7s1 - к ISP (172.16.2.2/28), enp7s2 - в сторону BR-SRV (192.168.0.0/28 = 16 адресов)
-apt-get update %% apt-get install -y nano tzdata 
+apt-get update && apt-get install -y tzdata
+timedatectl set-timezone "$TZ"
 TZ="Asia/Krasnoyarsk"   # поставьте часовой пояс места проведения экзамена
 
 hostnamectl set-hostname br-rtr.au-team.irpo
