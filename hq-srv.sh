@@ -1,14 +1,18 @@
 #!/bin/bash
 # HQ-SRV, модуль 1 (VLAN 100: 192.168.100.2/27, шлюз 192.168.100.1)
+apt-get update && apt-get install -y tzdata
+timedatectl set-timezone "$TZ"
 TZ="Asia/Krasnoyarsk"   # поставьте часовой пояс места проведения экзамена
-IFACE=enp7s1            # проверьте имя интерфейса командой ip a
+IFACE=enp7s1.100            # проверьте имя интерфейса командой ip a
 
 hostnamectl set-hostname hq-srv.au-team.irpo
 
 # ---------- IP ----------
 mkdir -p /etc/net/ifaces/$IFACE
 cat > /etc/net/ifaces/$IFACE/options <<'EOF'
-TYPE=eth
+TYPE=vlan
+HOST=enp7s1
+VID=100
 BOOTPROTO=static
 CONFIG_IPV4=yes
 DISABLED=no
