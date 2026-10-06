@@ -1,6 +1,8 @@
 #!/bin/bash
 # HQ-RTR (Linux), модуль 1
 # enp7s1 - к ISP (172.16.1.2/28), enp7s2 - в сторону HQ (один порт, VLAN 100/200/999)
+apt-get update && apt-get install -y tzdata
+timedatectl set-timezone "$TZ"
 TZ="Asia/Krasnoyarsk"   # поставьте часовой пояс места проведения экзамена
 
 hostnamectl set-hostname hq-rtr.au-team.irpo
