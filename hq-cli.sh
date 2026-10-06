@@ -1,5 +1,7 @@
 #!/bin/bash
 # HQ-CLI, модуль 1: адрес приходит по DHCP от HQ-RTR (VLAN 200)
+apt-get update && apt-get install -y tzdata
+timedatectl set-timezone "$TZ"
 TZ="Asia/Krasnoyarsk"   # поставьте часовой пояс места проведения экзамена
 
 hostnamectl set-hostname hq-cli.au-team.irpo
