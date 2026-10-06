@@ -1,5 +1,7 @@
 #!/bin/bash
 # BR-SRV, модуль 1 (192.168.0.2/28, шлюз 192.168.0.1)
+apt-get update && apt-get install -y tzdata
+timedatectl set-timezone "$TZ"
 TZ="Asia/Krasnoyarsk"   # поставьте часовой пояс места проведения экзамена
 IFACE=enp7s1            # проверьте имя интерфейса командой ip a
 
