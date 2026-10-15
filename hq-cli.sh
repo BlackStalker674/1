@@ -2,7 +2,8 @@
 # =============================================================================
 #  hq-cli.sh — рабочая станция HQ-CLI (ALT Linux p10 Рабочая станция)
 #  КОД 09.02.06-1-2026
-#   М1: имя, адрес по DHCP от HQ-RTR (сеть — через NetworkManager, не etcnet)
+#   М1: имя, адрес по DHCP от HQ-RTR на VLAN-интерфейсе enp7s1.200
+#       (конфиг в etcnet; NetworkManager перечитывает его через плагин etcnet)
 #   М2: ввод в домен au-team.irpo (SSSD), sudo для группы hq (cat, grep, id),
 #       автомонтирование NFS в /mnt/nfs, NTP-клиент, Яндекс Браузер,
 #       sshuser + SSH 2027 (для Ansible с BR-SRV)
@@ -14,7 +15,9 @@
 HOST_FQDN="hq-cli.au-team.irpo"
 HOST_SHORT="hq-cli"
 TZ_NAME="Asia/Krasnoyarsk"
-IF_LAN="enp7s1"
+IF_PHYS="enp7s1"                # физический порт
+CLI_VLAN="200"                  # VLAN клиента; пусто = без VLAN
+IF_LAN="$IF_PHYS${CLI_VLAN:+.$CLI_VLAN}"   # enp7s1.200
 EXPECTED_IP="192.168.200.2"     # зарезервирован на HQ-RTR за именем hq-cli
 SSH_PORT="2027"
 SSH_USER="sshuser"; SSH_UID="2027"; PASS="P@ssw0rd"
@@ -183,27 +186,83 @@ enable_first() {            # запускает первую существую
     fi
   done; die "None of these services found/started: $*"
 }
+# VLAN-подынтерфейс в etcnet: $1 родитель, $2 VID, $3 dhcp|static, $4 адрес/маска, $5 шлюз, $6 DNS
+# Родительский интерфейс остаётся без IP-адреса; если его каталог уже есть — меняем только BOOTPROTO.
+etcnet_vlan() {
+  local p="$1" vid="$2" proto="$3" v="$1.$2" pd="/etc/net/ifaces/$1" d="/etc/net/ifaces/$1.$2" nm="no"
+  mkdir -p "$pd" "$d"
+  if [ -f "$pd/options" ]; then
+    backup "$pd/options"
+    nm="$(sed -n 's/^NM_CONTROLLED=//p' "$pd/options" | tail -1)"; [ -n "$nm" ] || nm="no"
+    if [ "$5" != "keep-parent" ]; then
+      sed -i -E 's/^BOOTPROTO=.*/BOOTPROTO=static/; s/^DISABLED=.*/DISABLED=no/' "$pd/options"
+      rm -f "$pd/ipv4address" "$pd/ipv4route"
+    fi
+  else
+    printf 'TYPE=eth\nDISABLED=no\nNM_CONTROLLED=no\nBOOTPROTO=static\nCONFIG_IPV4=yes\n' > "$pd/options"
+  fi
+  [ -f "$d/options" ] && backup "$d/options"
+  cat > "$d/options" <<EOF
+TYPE=vlan
+HOST=$p
+VID=$vid
+DISABLED=no
+NM_CONTROLLED=$nm
+BOOTPROTO=$proto
+CONFIG_IPV4=yes
+ONBOOT=yes
+EOF
+  rm -f "$d/ipv4address" "$d/ipv4route"
+  if [ "$proto" = "static" ]; then
+    echo "$4" > "$d/ipv4address"
+    if [ -n "$5" ] && [ "$5" != "keep-parent" ]; then echo "default via $5" > "$d/ipv4route"; fi
+  fi
+  if [ -n "$6" ]; then printf 'search au-team.irpo\nnameserver %s\n' "$6" > "$d/resolv.conf"; fi
+  ok "etcnet: $v (VLAN $vid on $p, $proto ${4:-}, NM_CONTROLLED=$nm)"
+}
 
 # ============================== МОДУЛЬ 1 =====================================
 step "Hostname"
-check_iface "$IF_LAN"
 set_hostname "$HOST_FQDN"
 
-step "Network via NetworkManager (DHCP)"
-command -v nmcli >/dev/null || die "nmcli not found - HQ-CLI network must be managed by NetworkManager"
-systemctl is-active --quiet NetworkManager || systemctl enable --now NetworkManager || die "NetworkManager is not running"
-CON="$(nmcli -t -f NAME,DEVICE con show | awk -F: -v d="$IF_LAN" '$2==d{print $1; exit}' || true)"
-if [ -z "$CON" ]; then
-  nmcli con add type ethernet ifname "$IF_LAN" con-name "$IF_LAN" || die "Failed to create connection"
-  CON="$IF_LAN"
+step "Network: DHCP on $IF_LAN"
+# Подключение "System ..." создаёт плагин etcnet, менять его через nmcli нельзя
+# ("settings plugin does not support modifying connections"). Поэтому правим
+# файлы etcnet и просим NetworkManager их перечитать.
+check_iface "$IF_PHYS"
+if [ -n "$CLI_VLAN" ]; then
+  modprobe 8021q 2>/dev/null || true
+  etcnet_vlan "$IF_PHYS" "$CLI_VLAN" dhcp "" "keep-parent" ""
+else
+  sed -i -E 's/^BOOTPROTO=.*/BOOTPROTO=dhcp/' "/etc/net/ifaces/$IF_LAN/options" 2>/dev/null || etcnet_eth "$IF_LAN" dhcp
+  rm -f "/etc/net/ifaces/$IF_LAN/ipv4address" "/etc/net/ifaces/$IF_LAN/ipv4route"
 fi
-nmcli con mod "$CON" ipv4.method auto ipv4.addresses "" ipv4.gateway "" \
-  ipv4.ignore-auto-dns no ipv4.dhcp-send-hostname yes ipv4.dhcp-hostname "$HOST_SHORT" \
-  connection.autoconnect yes || die "nmcli con mod failed"
-nmcli con down "$CON" >/dev/null 2>&1 || true
-nmcli con up "$CON" || die "Connection $CON did not come up"
-for i in $(seq 1 20); do ip -4 addr show "$IF_LAN" | grep -q 'inet ' && break; sleep 1; done
-CUR_IP="$(ip -4 -o addr show "$IF_LAN" | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
+apply_net() {
+  if systemctl is-active --quiet NetworkManager && nmcli -t -f DEVICE,STATE dev 2>/dev/null | grep "^$IF_LAN:" | grep -vq unmanaged; then
+    nmcli con reload || true
+    NMCON="$(nmcli -t -f NAME,DEVICE con show 2>/dev/null | awk -F: -v d="$IF_LAN" '$2==d{print $1; exit}' || true)"
+    [ -n "$NMCON" ] || NMCON="System $IF_LAN"
+    nmcli con down "$NMCON" >/dev/null 2>&1 || true
+    nmcli con up "$NMCON" >/dev/null 2>&1 || nmcli dev connect "$IF_LAN" >/dev/null 2>&1 || true
+    echo "Applied via NetworkManager ($NMCON)"
+  else
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+    systemctl restart network || warn "network restart returned an error"
+    echo "Applied via etcnet (network service)"
+  fi
+}
+got_ip() { ip -4 -o addr show "$IF_LAN" 2>/dev/null | grep -v ' 169\.254\.' | grep -q 'inet '; }
+apply_net
+echo "Waiting for DHCP on $IF_LAN (up to 40 s)..."
+for i in $(seq 1 20); do got_ip && break; sleep 2; done
+if ! got_ip; then
+  warn "No address yet - restarting NetworkManager and network"
+  systemctl restart network >/dev/null 2>&1 || true
+  systemctl restart NetworkManager >/dev/null 2>&1 || true
+  for i in $(seq 1 20); do got_ip && break; sleep 2; done
+fi
+got_ip || { ip -br addr; die "No DHCP address on $IF_LAN - check HQ-RTR (dnsmasq on enp7s2.200) and VLAN 200"; }
+CUR_IP="$(ip -4 -o addr show "$IF_LAN" | grep -v ' 169\.254\.' | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
 [ -n "$CUR_IP" ] || die "No DHCP address - check HQ-RTR (dnsmasq) and VLAN 200"
 ok "Got address $CUR_IP"
 [ "$CUR_IP" = "$EXPECTED_IP" ] || warn "Address is $CUR_IP, but DNS hq-cli = $EXPECTED_IP. Check dhcp-host on HQ-RTR"

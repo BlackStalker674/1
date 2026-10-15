@@ -14,7 +14,9 @@
 # ---------------------------- ПАРАМЕТРЫ --------------------------------------
 HOST_FQDN="hq-srv.au-team.irpo"
 TZ_NAME="Asia/Krasnoyarsk"
-IF_LAN="enp7s1"
+IF_PHYS="enp7s1"                          # физический порт
+SRV_VLAN="100"                            # VLAN сервера; пусто = без VLAN
+IF_LAN="$IF_PHYS${SRV_VLAN:+.$SRV_VLAN}"   # enp7s1.100
 IP_ADDR="192.168.100.2/27"; GW="192.168.100.1"
 SSH_PORT="2027"
 SSH_USER="sshuser"; SSH_UID="2027"; PASS="P@ssw0rd"
@@ -189,6 +191,40 @@ enable_first() {            # запускает первую существую
     fi
   done; die "None of these services found/started: $*"
 }
+# VLAN-подынтерфейс в etcnet: $1 родитель, $2 VID, $3 dhcp|static, $4 адрес/маска, $5 шлюз, $6 DNS
+# Родительский интерфейс остаётся без IP-адреса; если его каталог уже есть — меняем только BOOTPROTO.
+etcnet_vlan() {
+  local p="$1" vid="$2" proto="$3" v="$1.$2" pd="/etc/net/ifaces/$1" d="/etc/net/ifaces/$1.$2" nm="no"
+  mkdir -p "$pd" "$d"
+  if [ -f "$pd/options" ]; then
+    backup "$pd/options"
+    nm="$(sed -n 's/^NM_CONTROLLED=//p' "$pd/options" | tail -1)"; [ -n "$nm" ] || nm="no"
+    if [ "$5" != "keep-parent" ]; then
+      sed -i -E 's/^BOOTPROTO=.*/BOOTPROTO=static/; s/^DISABLED=.*/DISABLED=no/' "$pd/options"
+      rm -f "$pd/ipv4address" "$pd/ipv4route"
+    fi
+  else
+    printf 'TYPE=eth\nDISABLED=no\nNM_CONTROLLED=no\nBOOTPROTO=static\nCONFIG_IPV4=yes\n' > "$pd/options"
+  fi
+  [ -f "$d/options" ] && backup "$d/options"
+  cat > "$d/options" <<EOF
+TYPE=vlan
+HOST=$p
+VID=$vid
+DISABLED=no
+NM_CONTROLLED=$nm
+BOOTPROTO=$proto
+CONFIG_IPV4=yes
+ONBOOT=yes
+EOF
+  rm -f "$d/ipv4address" "$d/ipv4route"
+  if [ "$proto" = "static" ]; then
+    echo "$4" > "$d/ipv4address"
+    if [ -n "$5" ] && [ "$5" != "keep-parent" ]; then echo "default via $5" > "$d/ipv4route"; fi
+  fi
+  if [ -n "$6" ]; then printf 'search au-team.irpo\nnameserver %s\n' "$6" > "$d/resolv.conf"; fi
+  ok "etcnet: $v (VLAN $vid on $p, $proto ${4:-}, NM_CONTROLLED=$nm)"
+}
 
 mount_iso() {
   mkdir -p "$ISO_MNT"
@@ -202,13 +238,20 @@ mount_iso() {
 }
 # ============================== МОДУЛЬ 1 =====================================
 step "Interface check and hostname"
-check_iface "$IF_LAN"
+check_iface "$IF_PHYS"
 set_hostname "$HOST_FQDN"
 grep -q "$HOST_FQDN" /etc/hosts || echo "${IP_ADDR%/*} $HOST_FQDN hq-srv" >> /etc/hosts
 
 step "Addressing (DNS during install = $DNS_FWD1)"
-etcnet_eth "$IF_LAN" static "$IP_ADDR" "$GW" "$DNS_FWD1"
+if [ -n "$SRV_VLAN" ]; then
+  modprobe 8021q 2>/dev/null || true
+  etcnet_vlan "$IF_PHYS" "$SRV_VLAN" static "$IP_ADDR" "$GW" "$DNS_FWD1"
+else
+  etcnet_eth "$IF_LAN" static "$IP_ADDR" "$GW" "$DNS_FWD1"
+fi
 restart_network
+ip -4 addr show "$IF_LAN" 2>/dev/null | grep -q "${IP_ADDR%/*}" || die "$IF_LAN has no address $IP_ADDR"
+ok "$IF_LAN: $IP_ADDR, gateway $GW"
 wait_inet
 
 step "Timezone"
