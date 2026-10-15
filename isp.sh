@@ -159,12 +159,15 @@ install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 сод�
   grep -Eq '^[@#]includedir[[:space:]]+/etc/sudoers\.d' /etc/sudoers || echo '@includedir /etc/sudoers.d' >> /etc/sudoers
   local f="/etc/sudoers.d/$1" g
   # sudo на ALT требует права 0400 на ВСЕХ файлах sudoers.d, иначе visudo -c падает
-  for g in /etc/sudoers.d/*; do [ -f "$g" ] && { chown root:root "$g"; chmod 0400 "$g"; }; done
+  for g in /etc/sudoers /etc/sudoers.d/*; do [ -f "$g" ] && { chown root:root "$g"; chmod 0400 "$g"; }; done
   printf '%s\n' "$2" > "$f.tmp"          # файлы с точкой sudo игнорирует — безопасная проверка
   chmod 0400 "$f.tmp"
   visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Syntax error in sudo rule $1"; }
   mv -f "$f.tmp" "$f"; chown root:root "$f"; chmod 0400 "$f"
-  visudo -c >/dev/null || die "visudo -c: sudo config error"
+  if ! visudo -c >/dev/null 2>&1; then
+    visudo -c 2>&1 | tail -5
+    die "visudo -c: sudo config error (see lines above)"
+  fi
   ok "sudo: $f (mode 0400)"
 }
 chrony_client() {           # $1 — адрес NTP-сервера ISP

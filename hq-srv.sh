@@ -161,12 +161,15 @@ install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 сод�
   grep -Eq '^[@#]includedir[[:space:]]+/etc/sudoers\.d' /etc/sudoers || echo '@includedir /etc/sudoers.d' >> /etc/sudoers
   local f="/etc/sudoers.d/$1" g
   # sudo на ALT требует права 0400 на ВСЕХ файлах sudoers.d, иначе visudo -c падает
-  for g in /etc/sudoers.d/*; do [ -f "$g" ] && { chown root:root "$g"; chmod 0400 "$g"; }; done
+  for g in /etc/sudoers /etc/sudoers.d/*; do [ -f "$g" ] && { chown root:root "$g"; chmod 0400 "$g"; }; done
   printf '%s\n' "$2" > "$f.tmp"          # файлы с точкой sudo игнорирует — безопасная проверка
   chmod 0400 "$f.tmp"
   visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Syntax error in sudo rule $1"; }
   mv -f "$f.tmp" "$f"; chown root:root "$f"; chmod 0400 "$f"
-  visudo -c >/dev/null || die "visudo -c: sudo config error"
+  if ! visudo -c >/dev/null 2>&1; then
+    visudo -c 2>&1 | tail -5
+    die "visudo -c: sudo config error (see lines above)"
+  fi
   ok "sudo: $f (mode 0400)"
 }
 chrony_client() {           # $1 — адрес NTP-сервера ISP
@@ -343,8 +346,12 @@ else
   echo "Disks for array: ${DISKS[0]} ${DISKS[1]}"
   mdadm --create /dev/md0 --level=0 --raid-devices=2 --run "${DISKS[0]}" "${DISKS[1]}" || die "mdadm --create failed"
 fi
-mdadm --detail --scan > /etc/mdadm.conf
-grep -q md0 /etc/mdadm.conf && ok "Array config saved to /etc/mdadm.conf" || die "md0 not written to mdadm.conf"
+{ echo "DEVICE partitions"; mdadm --detail --scan; } > /etc/mdadm.conf
+if grep -q '^ARRAY' /etc/mdadm.conf; then
+  ok "Array config saved to /etc/mdadm.conf: $(grep '^ARRAY' /etc/mdadm.conf | awk '{print $2}' | tr '\n' ' ')"
+else
+  cat /proc/mdstat; die "mdadm --detail --scan returned no arrays"
+fi
 if [ ! -b /dev/md0p1 ]; then
   echo ',,L' | sfdisk -q /dev/md0 || die "Failed to create partition on md0"
   partprobe /dev/md0 2>/dev/null || true; sleep 2

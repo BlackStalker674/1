@@ -157,12 +157,15 @@ install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 сод�
   grep -Eq '^[@#]includedir[[:space:]]+/etc/sudoers\.d' /etc/sudoers || echo '@includedir /etc/sudoers.d' >> /etc/sudoers
   local f="/etc/sudoers.d/$1" g
   # sudo на ALT требует права 0400 на ВСЕХ файлах sudoers.d, иначе visudo -c падает
-  for g in /etc/sudoers.d/*; do [ -f "$g" ] && { chown root:root "$g"; chmod 0400 "$g"; }; done
+  for g in /etc/sudoers /etc/sudoers.d/*; do [ -f "$g" ] && { chown root:root "$g"; chmod 0400 "$g"; }; done
   printf '%s\n' "$2" > "$f.tmp"          # файлы с точкой sudo игнорирует — безопасная проверка
   chmod 0400 "$f.tmp"
   visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Syntax error in sudo rule $1"; }
   mv -f "$f.tmp" "$f"; chown root:root "$f"; chmod 0400 "$f"
-  visudo -c >/dev/null || die "visudo -c: sudo config error"
+  if ! visudo -c >/dev/null 2>&1; then
+    visudo -c 2>&1 | tail -5
+    die "visudo -c: sudo config error (see lines above)"
+  fi
   ok "sudo: $f (mode 0400)"
 }
 chrony_client() {           # $1 — адрес NTP-сервера ISP
@@ -408,6 +411,13 @@ volumes:
   db_data:
 EOF
   (cd "$APP_DIR" && docker compose config -q) || die "compose.yaml error"
+  # Контейнеры с теми же именами от прошлых запусков/старых скриптов мешают созданию
+  for c in db testapp; do
+    if docker ps -a --format '{{.Names}}' | grep -qx "$c"; then
+      proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$c" 2>/dev/null || true)"
+      if [ "$proj" != "$APP_DIR" ]; then docker rm -f "$c" >/dev/null && warn "Removed old container $c (from ${proj:-unknown})"; fi
+    fi
+  done
   (cd "$APP_DIR" && docker compose up -d) || die "docker compose up failed"
   for i in $(seq 1 30); do
     curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ 2>/dev/null | grep -qE '^(200|30[0-9])$' && break; sleep 2

@@ -156,12 +156,15 @@ install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 сод�
   grep -Eq '^[@#]includedir[[:space:]]+/etc/sudoers\.d' /etc/sudoers || echo '@includedir /etc/sudoers.d' >> /etc/sudoers
   local f="/etc/sudoers.d/$1" g
   # sudo на ALT требует права 0400 на ВСЕХ файлах sudoers.d, иначе visudo -c падает
-  for g in /etc/sudoers.d/*; do [ -f "$g" ] && { chown root:root "$g"; chmod 0400 "$g"; }; done
+  for g in /etc/sudoers /etc/sudoers.d/*; do [ -f "$g" ] && { chown root:root "$g"; chmod 0400 "$g"; }; done
   printf '%s\n' "$2" > "$f.tmp"          # файлы с точкой sudo игнорирует — безопасная проверка
   chmod 0400 "$f.tmp"
   visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Syntax error in sudo rule $1"; }
   mv -f "$f.tmp" "$f"; chown root:root "$f"; chmod 0400 "$f"
-  visudo -c >/dev/null || die "visudo -c: sudo config error"
+  if ! visudo -c >/dev/null 2>&1; then
+    visudo -c 2>&1 | tail -5
+    die "visudo -c: sudo config error (see lines above)"
+  fi
   ok "sudo: $f (mode 0400)"
 }
 chrony_client() {           # $1 — адрес NTP-сервера ISP
@@ -373,17 +376,81 @@ EOF
 printf '%s %s : PSK "%s"\n' "$TUN_LOCAL" "$TUN_REMOTE" "$IPSEC_PSK" > "$IPSEC_DIR/ipsec.secrets"
 chmod 600 "$IPSEC_DIR/ipsec.secrets"
 ok "Config: $IPSEC_DIR/ipsec.conf, key in ipsec.secrets"
+enable_first_soft() {        # как enable_first, но без аварийного выхода
+  local s; ENABLED_SVC=""
+  for s in "$@"; do
+    systemctl cat "$s.service" >/dev/null 2>&1 || continue
+    ENABLED_SVC="$s"
+    systemctl enable "$s" >/dev/null 2>&1 || true
+    if systemctl restart "$s"; then ok "Service $s started"; return 0; fi
+    warn "Service $s failed to start:"; journalctl -u "$s" -n 15 --no-pager 2>/dev/null || true
+  done
+  return 1
+}
+# Вариант swanctl (для службы strongswan / charon-systemd) — те же параметры
+for SW in /etc/strongswan/swanctl /etc/swanctl; do [ -d "$SW" ] && break; done
+if [ -d "$SW" ]; then
+  mkdir -p "$SW/conf.d"
+  cat > "$SW/conf.d/gre-protect.conf" <<EOF
+connections {
+  gre-protect {
+    version = 2
+    local_addrs = $TUN_LOCAL
+    remote_addrs = $TUN_REMOTE
+    proposals = aes256-sha256-modp2048
+    dpd_delay = 30s
+    local {
+      auth = psk
+      id = $TUN_LOCAL
+    }
+    remote {
+      auth = psk
+      id = $TUN_REMOTE
+    }
+    children {
+      gre {
+        mode = transport
+        local_ts = dynamic[gre]
+        remote_ts = dynamic[gre]
+        esp_proposals = aes256-sha256
+        start_action = start
+        dpd_action = restart
+      }
+    }
+  }
+}
+secrets {
+  ike-gre {
+    id-1 = $TUN_LOCAL
+    id-2 = $TUN_REMOTE
+    secret = "$IPSEC_PSK"
+  }
+}
+EOF
+  chmod 600 "$SW/conf.d/gre-protect.conf"
+  ok "swanctl config: $SW/conf.d/gre-protect.conf"
+fi
 ip link set tun0 mtu 1400
 echo "mtu 1400" > /etc/net/ifaces/tun0/iplink
-enable_first ipsec strongswan-starter strongswan
-systemctl restart "$ENABLED_SVC" || die "Service $ENABLED_SVC did not restart"
+IPSEC_RUN=0
+if enable_first_soft strongswan-starter ipsec strongswan; then
+  IPSEC_RUN=1
+  command -v swanctl >/dev/null 2>&1 && swanctl --load-all >/dev/null 2>&1 || true
+elif command -v ipsec >/dev/null 2>&1 && ipsec restart >/dev/null 2>&1; then
+  IPSEC_RUN=1; ok "strongSwan started via 'ipsec restart'"
+else
+  echo "---- strongSwan units ----"; systemctl list-unit-files 2>/dev/null | grep -iE 'strongswan|ipsec|charon' || echo "(none)"
+  warn "strongSwan did not start - tunnel stays unencrypted, the rest of the script continues"
+fi
 IPSEC_UP=0
-for i in $(seq 1 20); do
-  if ipsec statusall 2>/dev/null | grep -q ESTABLISHED || ip xfrm state 2>/dev/null | grep -q 'proto esp'; then IPSEC_UP=1; break; fi
-  sleep 2
-done
+if [ "$IPSEC_RUN" = 1 ]; then
+  for i in $(seq 1 20); do
+    if ip xfrm state 2>/dev/null | grep -q 'proto esp'; then IPSEC_UP=1; break; fi
+    sleep 2
+  done
+fi
 if [ "$IPSEC_UP" = 1 ]; then ok "IPsec SA established (ip xfrm state)"
-else warn "IPsec is not up yet - other router not configured? Check: ipsec statusall"; fi
+else warn "IPsec SA is not up yet - other router not configured? Check: ip xfrm state; swanctl --list-sas || ipsec statusall"; fi
 systemctl restart frr
 sleep 8
 vtysh -c "show ip ospf neighbor" | grep -q Full && ok "OSPF neighbor is Full over the encrypted tunnel" \
