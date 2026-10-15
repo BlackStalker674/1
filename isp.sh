@@ -29,7 +29,7 @@ CERT_USER="sshuser"; CERT_PASS="P@ssw0rd"
 STAGE="${1:-all}"                          # all | tls
 
 # ---------------------------- ОБЩИЕ ФУНКЦИИ ----------------------------------
-set -Eeo pipefail
+set -Ee   # без pipefail: "cmd | grep -q" иначе ложно падает от SIGPIPE
 LOG_FILE="/var/log/$(basename "$0" .sh)-setup.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 C_R='\033[1;31m'; C_G='\033[1;32m'; C_Y='\033[1;33m'; C_B='\033[1;34m'; C_N='\033[0m'
@@ -201,11 +201,20 @@ set_resolv() {              # $1 iface (etcnet), $2 nameserver
   ok "DNS: $2"
 }
 enable_first() {            # запускает первую существующую службу из списка
-  local s; for s in "$@"; do
-    if systemctl list-unit-files "$s.service" 2>/dev/null | grep -q "^$s.service"; then
-      systemctl enable --now "$s" && { ENABLED_SVC="$s"; ok "Service $s started"; return 0; }
+  local s
+  for s in "$@"; do
+    if systemctl cat "$s.service" >/dev/null 2>&1; then
+      systemctl enable "$s" >/dev/null 2>&1 || true
+      if systemctl restart "$s"; then ENABLED_SVC="$s"; ok "Service $s started"; return 0; fi
+      warn "Service $s failed to start:"; journalctl -u "$s" -n 10 --no-pager 2>/dev/null || true
+    elif [ -x "/etc/init.d/$s" ]; then
+      chkconfig "$s" on >/dev/null 2>&1 || true
+      if service "$s" restart; then ENABLED_SVC="$s"; ok "Service $s started (SysV)"; return 0; fi
     fi
-  done; die "None of these services found/started: $*"
+  done
+  echo "---- matching units ----"
+  systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -iE "$(echo "$*" | tr ' ' '|')" || echo "(none)"
+  die "None of these services found/started: $*"
 }
 # VLAN-подынтерфейс в etcnet: $1 родитель, $2 VID, $3 dhcp|static, $4 адрес/маска, $5 шлюз, $6 DNS
 # Родительский интерфейс остаётся без IP-адреса; если его каталог уже есть — меняем только BOOTPROTO.
