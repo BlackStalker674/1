@@ -37,40 +37,40 @@ step() { echo -e "\n${C_B}==> $*${C_N}"; }
 ok()   { echo -e "${C_G}[ OK ]${C_N} $*"; }
 warn() { echo -e "${C_Y}[WARN]${C_N} $*"; }
 die()  { echo -e "${C_R}[FAIL]${C_N} $*"; exit 1; }
-trap 'rc=$?; echo -e "${C_R}[FAIL]${C_N} строка ${LINENO}: «${BASH_COMMAND}» вернула код ${rc}. Лог: ${LOG_FILE}"' ERR
+trap 'rc=$?; echo -e "${C_R}[FAIL]${C_N} line ${LINENO}: "${BASH_COMMAND}" returned ${rc}. Log: ${LOG_FILE}"' ERR
 
-[ "$(id -u)" -eq 0 ] || die "Запустите скрипт от root"
-[ -r /etc/altlinux-release ] || warn "Нет /etc/altlinux-release — скрипт рассчитан на ALT Linux p10"
+[ "$(id -u)" -eq 0 ] || die "Run this script as root"
+[ -r /etc/altlinux-release ] || warn "No /etc/altlinux-release - script is made for ALT Linux p10"
 
 backup() { [ -e "$1" ] && [ ! -e "$1.orig" ] && cp -a "$1" "$1.orig"; return 0; }
 
 APT_UPDATED=0
 apt_update() {
   [ "$APT_UPDATED" -eq 1 ] && return 0
-  apt-get update -q || die "apt-get update не выполнен — проверьте Интернет/DNS"
+  apt-get update -q || die "apt-get update failed - check Internet/DNS"
   APT_UPDATED=1
 }
 pkg_install() {             # установка с проверкой наличия в репозитории
   apt_update
   local p miss=()
   for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 || miss+=("$p"); done
-  [ ${#miss[@]} -eq 0 ] || die "Нет в репозитории: ${miss[*]}"
-  apt-get install -y "$@" || die "Ошибка установки: $*"
-  for p in "$@"; do rpm -q "$p" >/dev/null 2>&1 || rpm -q --whatprovides "$p" >/dev/null 2>&1 || die "Пакет $p не установлен"; done
-  ok "Пакеты установлены: $*"
+  [ ${#miss[@]} -eq 0 ] || die "Not in repository: ${miss[*]}"
+  apt-get install -y "$@" || die "Install failed: $*"
+  for p in "$@"; do rpm -q "$p" >/dev/null 2>&1 || rpm -q --whatprovides "$p" >/dev/null 2>&1 || die "Package $p is not installed"; done
+  ok "Packages installed: $*"
 }
-check_iface() { ip link show "$1" >/dev/null 2>&1 || die "Интерфейс $1 не найден (ip -br link)"; ok "Интерфейс $1 есть"; }
+check_iface() { ip link show "$1" >/dev/null 2>&1 || die "Interface $1 not found (see: ip -br link)"; ok "Interface $1 found"; }
 set_hostname() {
-  hostnamectl set-hostname "$1" || die "hostnamectl не сработал"
+  hostnamectl set-hostname "$1" || die "hostnamectl failed"
   if [ -f /etc/sysconfig/network ]; then
     sed -i '/^HOSTNAME=/d' /etc/sysconfig/network; echo "HOSTNAME=$1" >> /etc/sysconfig/network
   fi
-  [ "$(hostname)" = "$1" ] && ok "Имя хоста: $1" || die "Имя хоста не применилось"
+  [ "$(hostname)" = "$1" ] && ok "Hostname: $1" || die "Hostname was not applied"
 }
 set_tz() {
   pkg_install tzdata                              # tzdata — до смены пояса
-  timedatectl set-timezone "$TZ_NAME" || die "Не удалось установить часовой пояс"
-  readlink -f /etc/localtime | grep -q "$TZ_NAME" && ok "Часовой пояс: $TZ_NAME" || die "Часовой пояс не применился"
+  timedatectl set-timezone "$TZ_NAME" || die "Failed to set timezone"
+  readlink -f /etc/localtime | grep -q "$TZ_NAME" && ok "Timezone: $TZ_NAME" || die "Timezone was not applied"
 }
 # etcnet: $1 iface, $2 BOOTPROTO, $3 адрес/маска, $4 шлюз, $5 DNS
 etcnet_eth() {
@@ -96,16 +96,17 @@ enable_forward() {
     sed -i -E 's/^\s*net\.ipv4\.ip_forward.*/net.ipv4.ip_forward = 1/' "$f"
   else echo "net.ipv4.ip_forward = 1" >> "$f"; fi
   sysctl -w net.ipv4.ip_forward=1 >/dev/null
-  [ "$(cat /proc/sys/net/ipv4/ip_forward)" = "1" ] && ok "IP forwarding включён" || die "ip_forward не включён"
+  [ "$(cat /proc/sys/net/ipv4/ip_forward)" = "1" ] && ok "IP forwarding enabled" || die "ip_forward is not enabled"
 }
 restart_network() {
-  systemctl restart network || die "Не удалось перезапустить network"
-  sleep 3; ok "Сеть перезапущена"
+  chattr -i /etc/resolv.conf 2>/dev/null || true
+  systemctl restart network || die "Failed to restart network"
+  sleep 3; ok "Network restarted"
 }
 wait_inet() {
   local i; for i in $(seq 1 40); do
-    ping -c1 -W1 77.88.8.8 >/dev/null 2>&1 && { ok "Интернет доступен"; return 0; }; sleep 1
-  done; die "Нет связи с 77.88.8.8 — проверьте адресацию/NAT"
+    ping -c1 -W1 77.88.8.8 >/dev/null 2>&1 && { ok "Internet is reachable"; return 0; }; sleep 1
+  done; die "No reply from 77.88.8.8 - check addressing/NAT"
 }
 SSHD_CFG=/etc/openssh/sshd_config
 sshd_set() {   # удаляет все варианты директивы и ставит её в начало файла (до блоков Match)
@@ -113,32 +114,32 @@ sshd_set() {   # удаляет все варианты директивы и с
   sed -i "1i $1 $2" "$SSHD_CFG"
 }
 sshd_apply() {
-  /usr/sbin/sshd -t || die "Ошибка в $SSHD_CFG (sshd -t)"
+  /usr/sbin/sshd -t || die "Error in $SSHD_CFG (sshd -t)"
   systemctl enable sshd >/dev/null 2>&1 || true
-  systemctl restart sshd || die "sshd не перезапустился"
-  ss -tln | grep -q ":$SSH_PORT " && ok "sshd слушает порт $SSH_PORT" || die "sshd не слушает $SSH_PORT"
+  systemctl restart sshd || die "sshd did not restart"
+  ss -tln | grep -q ":$SSH_PORT " && ok "sshd listens on port $SSH_PORT" || die "sshd does not listen on $SSH_PORT"
 }
 
 pkg_try() {                 # нефатальная установка: вернёт 1, если пакета нет
   apt_update
   local p
-  for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 || { warn "Пакет $p не найден в репозитории"; return 1; }; done
-  apt-get install -y "$@" || { warn "Не удалось установить: $*"; return 1; }
-  ok "Пакеты установлены: $*"
+  for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 || { warn "Package $p not found in repository"; return 1; }; done
+  apt-get install -y "$@" || { warn "Failed to install: $*"; return 1; }
+  ok "Packages installed: $*"
 }
 create_user() {             # $1 имя, $2 UID (может быть пустым), $3 пароль; группа wheel
   local u="$1" uid="$2" pw="$3"
   if id "$u" >/dev/null 2>&1; then
-    warn "Пользователь $u уже существует — обновляю пароль и группы"
-    if [ -n "$uid" ] && [ "$(id -u "$u")" != "$uid" ]; then warn "UID $u = $(id -u "$u"), ожидался $uid"; fi
+    warn "User $u already exists - updating password and groups"
+    if [ -n "$uid" ] && [ "$(id -u "$u")" != "$uid" ]; then warn "UID $u = $(id -u "$u"), expected $uid"; fi
   elif [ -n "$uid" ]; then
-    useradd -m -u "$uid" -G wheel -s /bin/bash "$u" || die "useradd $u не выполнен"
+    useradd -m -u "$uid" -G wheel -s /bin/bash "$u" || die "useradd $u failed"
   else
-    useradd -m -G wheel -s /bin/bash "$u" || die "useradd $u не выполнен"
+    useradd -m -G wheel -s /bin/bash "$u" || die "useradd $u failed"
   fi
-  echo "$u:$pw" | chpasswd || die "chpasswd для $u не выполнен"
+  echo "$u:$pw" | chpasswd || die "chpasswd for $u failed"
   usermod -aG wheel "$u"
-  id -nG "$u" | grep -qw wheel && ok "Пользователь $u (uid $(id -u "$u")) в группе wheel" || die "$u не в wheel"
+  id -nG "$u" | grep -qw wheel && ok "User $u (uid $(id -u "$u")) is in group wheel" || die "$u is not in wheel"
 }
 install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 содержимое
   pkg_install sudo
@@ -146,10 +147,10 @@ install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 сод�
   local f="/etc/sudoers.d/$1"
   printf '%s\n' "$2" > "$f.tmp"          # файлы с точкой sudo игнорирует — безопасная проверка
   chmod 0400 "$f.tmp"
-  visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Синтаксическая ошибка в правиле sudo $1"; }
+  visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Syntax error in sudo rule $1"; }
   mv -f "$f.tmp" "$f"; chown root:root "$f"; chmod 0400 "$f"
-  visudo -c >/dev/null || die "visudo -c: ошибка в конфигурации sudo"
-  ok "sudo: $f (права 0400)"
+  visudo -c >/dev/null || die "visudo -c: sudo config error"
+  ok "sudo: $f (mode 0400)"
 }
 chrony_client() {           # $1 — адрес NTP-сервера ISP
   pkg_install chrony
@@ -161,18 +162,19 @@ makestep 1.0 3
 rtcsync
 EOF
   systemctl enable chronyd >/dev/null 2>&1
-  systemctl restart chronyd || die "chronyd не запустился"
-  ok "chrony-клиент сервера $1"
+  systemctl restart chronyd || die "chronyd did not start"
+  ok "chrony client of server $1"
 }
 rsyslog_client() {          # $1 — сервер сбора логов; уровень warning и выше
   if pkg_try rsyslog-classic || pkg_try rsyslog; then
     mkdir -p /etc/rsyslog.d
     echo "*.warning @@$1:514" > /etc/rsyslog.d/90-remote.conf
     systemctl enable rsyslog >/dev/null 2>&1 || true
-    systemctl restart rsyslog && ok "rsyslog: *.warning -> $1:514/tcp" || warn "rsyslog не перезапустился"
-  else warn "rsyslog не установлен — пропуск"; fi
+    systemctl restart rsyslog && ok "rsyslog: *.warning -> $1:514/tcp" || warn "rsyslog did not restart"
+  else warn "rsyslog not installed - skipped"; fi
 }
 set_resolv() {              # $1 iface (etcnet), $2 nameserver
+  chattr -i /etc/resolv.conf 2>/dev/null || true   # снять защиту, если её ставил старый скрипт
   printf 'search au-team.irpo\nnameserver %s\n' "$2" > "/etc/net/ifaces/$1/resolv.conf"
   if command -v resolvconf >/dev/null 2>&1; then
     resolvconf -u >/dev/null 2>&1 || true
@@ -183,37 +185,40 @@ set_resolv() {              # $1 iface (etcnet), $2 nameserver
 enable_first() {            # запускает первую существующую службу из списка
   local s; for s in "$@"; do
     if systemctl list-unit-files "$s.service" 2>/dev/null | grep -q "^$s.service"; then
-      systemctl enable --now "$s" && { ENABLED_SVC="$s"; ok "Служба $s запущена"; return 0; }
+      systemctl enable --now "$s" && { ENABLED_SVC="$s"; ok "Service $s started"; return 0; }
     fi
-  done; die "Не найдена/не запустилась ни одна из служб: $*"
+  done; die "None of these services found/started: $*"
 }
 
 mount_iso() {
   mkdir -p "$ISO_MNT"
   if mountpoint -q "$ISO_MNT"; then return 0; fi
-  [ -b "$ISO_DEV" ] || { warn "Нет $ISO_DEV — подключите Additional.iso"; return 1; }
-  mount -o ro "$ISO_DEV" "$ISO_MNT" || { warn "Не удалось смонтировать $ISO_DEV"; return 1; }
-  ok "Additional.iso смонтирован в $ISO_MNT"
+  # Образ уже смонтирован в другом месте (например, в /mnt) — используем его
+  local cur; cur="$(findmnt -n -o TARGET -S "$ISO_DEV" 2>/dev/null | head -1 || true)"
+  if [ -n "$cur" ]; then ISO_MNT="$cur"; ok "Additional.iso already mounted at $ISO_MNT"; return 0; fi
+  [ -b "$ISO_DEV" ] || { warn "No $ISO_DEV - attach Additional.iso"; return 1; }
+  mount -o ro "$ISO_DEV" "$ISO_MNT" || { warn "Failed to mount $ISO_DEV"; return 1; }
+  ok "Additional.iso mounted at $ISO_MNT"
 }
 # ============================== МОДУЛЬ 1 =====================================
-step "Проверка интерфейса и имя"
+step "Interface check and hostname"
 check_iface "$IF_LAN"
 set_hostname "$HOST_FQDN"
 grep -q "$HOST_FQDN" /etc/hosts || echo "${IP_ADDR%/*} $HOST_FQDN hq-srv" >> /etc/hosts
 
-step "Адресация (на время установки DNS = $DNS_FWD1)"
+step "Addressing (DNS during install = $DNS_FWD1)"
 etcnet_eth "$IF_LAN" static "$IP_ADDR" "$GW" "$DNS_FWD1"
 restart_network
 wait_inet
 
-step "Часовой пояс"
+step "Timezone"
 set_tz
 
-step "Пользователь $SSH_USER (UID $SSH_UID, sudo без пароля)"
+step "User $SSH_USER (UID $SSH_UID, passwordless sudo)"
 create_user "$SSH_USER" "$SSH_UID" "$PASS"
 install_sudoers "$SSH_USER" "$SSH_USER ALL=(ALL:ALL) NOPASSWD: ALL"
 
-step "Безопасный SSH"
+step "Secure SSH"
 echo "Authorized access only" > /etc/openssh/banner
 sshd_set Port "$SSH_PORT"
 sshd_set AllowUsers "$SSH_USER"
@@ -222,7 +227,7 @@ sshd_set Banner /etc/openssh/banner
 sshd_set PermitRootLogin no
 sshd_apply
 
-step "DNS-сервер (dnsmasq) для au-team.irpo"
+step "DNS server (dnsmasq) for au-team.irpo"
 pkg_install dnsmasq
 backup /etc/dnsmasq.conf
 cat > /etc/dnsmasq.conf <<EOF
@@ -251,71 +256,71 @@ address=/web.au-team.irpo/172.16.2.1
 # ---- Модуль 3: мониторинг ----
 address=/mon.au-team.irpo/${IP_ADDR%/*}
 EOF
-dnsmasq --test || die "Ошибка в /etc/dnsmasq.conf"
+dnsmasq --test || die "Error in /etc/dnsmasq.conf"
 systemctl enable dnsmasq >/dev/null 2>&1
-systemctl restart dnsmasq || die "dnsmasq не запустился"
+systemctl restart dnsmasq || die "dnsmasq did not start"
 sleep 1
 set_resolv "$IF_LAN" 127.0.0.1
 pkg_try bind-utils || true
 if command -v host >/dev/null 2>&1; then
-  host hq-rtr.au-team.irpo 127.0.0.1 | grep -q 192.168.100.1 && ok "A hq-rtr" || die "Не разрешается hq-rtr.au-team.irpo"
-  host 192.168.100.2 127.0.0.1 | grep -q hq-srv && ok "PTR hq-srv" || die "Нет PTR для HQ-SRV"
-  host ya.ru 127.0.0.1 >/dev/null && ok "Пересылка во внешний DNS работает" || warn "Пересылка не работает"
+  host hq-rtr.au-team.irpo 127.0.0.1 | grep -q 192.168.100.1 && ok "A hq-rtr" || die "hq-rtr.au-team.irpo does not resolve"
+  host 192.168.100.2 127.0.0.1 | grep -q hq-srv && ok "PTR hq-srv" || die "No PTR for HQ-SRV"
+  host ya.ru 127.0.0.1 >/dev/null && ok "Forwarding to external DNS works" || warn "Forwarding does not work"
 else
-  getent hosts hq-srv.au-team.irpo >/dev/null && ok "DNS отвечает" || die "DNS не отвечает"
+  getent hosts hq-srv.au-team.irpo >/dev/null && ok "DNS replies" || die "DNS does not reply"
 fi
 
 # ============================== МОДУЛЬ 2 =====================================
-step "NTP-клиент"
+step "NTP client"
 chrony_client "$NTP_SRV"
 
 step "RAID0 /dev/md0 -> /raid (ext4)"
 pkg_install mdadm
 if [ -b /dev/md0 ]; then
-  warn "/dev/md0 уже существует — создание пропущено"
+  warn "/dev/md0 already exists - creation skipped"
 else
   mapfile -t DISKS < <(lsblk -dnbpo NAME,TYPE,SIZE | awk '$2=="disk" && $3>=900000000 && $3<=1300000000 {print $1}' |
     while read -r d; do [ "$(lsblk -no NAME "$d" | wc -l)" -eq 1 ] && ! mdadm --examine "$d" >/dev/null 2>&1 && echo "$d"; done)
-  [ ${#DISKS[@]} -ge 2 ] || die "Нужно два свободных диска ~1 ГБ, найдено: ${DISKS[*]:-нет}"
-  echo "Диски для массива: ${DISKS[0]} ${DISKS[1]}"
-  mdadm --create /dev/md0 --level=0 --raid-devices=2 --run "${DISKS[0]}" "${DISKS[1]}" || die "mdadm --create не выполнен"
+  [ ${#DISKS[@]} -ge 2 ] || die "Need two free ~1 GB disks, found: ${DISKS[*]:-none}"
+  echo "Disks for array: ${DISKS[0]} ${DISKS[1]}"
+  mdadm --create /dev/md0 --level=0 --raid-devices=2 --run "${DISKS[0]}" "${DISKS[1]}" || die "mdadm --create failed"
 fi
 mdadm --detail --scan > /etc/mdadm.conf
-grep -q md0 /etc/mdadm.conf && ok "Конфигурация массива в /etc/mdadm.conf" || die "md0 не записан в mdadm.conf"
+grep -q md0 /etc/mdadm.conf && ok "Array config saved to /etc/mdadm.conf" || die "md0 not written to mdadm.conf"
 if [ ! -b /dev/md0p1 ]; then
-  echo ',,L' | sfdisk -q /dev/md0 || die "Не удалось создать раздел на md0"
+  echo ',,L' | sfdisk -q /dev/md0 || die "Failed to create partition on md0"
   partprobe /dev/md0 2>/dev/null || true; sleep 2
-  mkfs.ext4 -F /dev/md0p1 || die "mkfs.ext4 не выполнен"
+  mkfs.ext4 -F /dev/md0p1 || die "mkfs.ext4 failed"
 fi
 mkdir -p /raid
 UUID_MD="$(blkid -s UUID -o value /dev/md0p1 || true)"
-[ -n "$UUID_MD" ] || die "Нет UUID у /dev/md0p1"
+[ -n "$UUID_MD" ] || die "No UUID on /dev/md0p1"
 sed -i '\#[[:space:]]/raid[[:space:]]#d' /etc/fstab
 echo "UUID=$UUID_MD /raid ext4 defaults 0 0" >> /etc/fstab
 systemctl daemon-reload
-mount -a || die "mount -a завершился с ошибкой"
-mountpoint -q /raid && ok "/raid смонтирован (автомонтирование через fstab)" || die "/raid не смонтирован"
+mount -a || die "mount -a failed"
+mountpoint -q /raid && ok "/raid mounted (automount via fstab)" || die "/raid is not mounted"
 
-step "NFS-сервер: /raid/nfs для $NFS_NET"
+step "NFS server: /raid/nfs for $NFS_NET"
 pkg_install nfs-server
 mkdir -p /raid/nfs; chmod 777 /raid/nfs
 backup /etc/exports
 sed -i '\#^/raid/nfs[[:space:]]#d' /etc/exports
 echo "/raid/nfs $NFS_NET(rw,sync,no_subtree_check)" >> /etc/exports
 enable_first nfs-server nfs
-exportfs -ra || die "exportfs -ra не выполнен"
-exportfs -v | grep -q /raid/nfs && ok "Экспорт /raid/nfs активен" || die "Экспорт не применился"
+exportfs -ra || die "exportfs -ra failed"
+exportfs -v | grep -q /raid/nfs && ok "Export /raid/nfs is active" || die "Export was not applied"
 
-step "Веб-приложение: Apache + MariaDB"
+step "Web app: Apache + MariaDB"
 pkg_install lamp-server
 enable_first mariadb mysqld
 enable_first httpd2
 if mount_iso; then
   WEB_SRC="$(find "$ISO_MNT" -maxdepth 2 -type d -iname web | head -1)"
-  [ -n "$WEB_SRC" ] || die "В образе нет каталога web"
+  [ -n "$WEB_SRC" ] || die "No web directory in the ISO"
   DUMP="$(find "$WEB_SRC" -maxdepth 1 -iname 'dump.sql' | head -1)"
-  [ -n "$DUMP" ] || die "Нет dump.sql в $WEB_SRC"
-  mysql -u root <<EOF || die "Ошибка создания БД/пользователя"
+  [ -n "$DUMP" ] || die "No dump.sql in $WEB_SRC"
+  mysql -u root <<EOF || die "Failed to create DB/user"
 CREATE DATABASE IF NOT EXISTS $DB_NAME;
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
 ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
@@ -323,12 +328,12 @@ GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
 FLUSH PRIVILEGES;
 EOF
   if [ "$(mysql -u root -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME'")" -eq 0 ]; then
-    mysql -u root "$DB_NAME" < "$DUMP" || die "Импорт dump.sql не выполнен"
-  else warn "В $DB_NAME уже есть таблицы — импорт пропущен"; fi
-  ok "БД $DB_NAME: таблиц $(mysql -u root -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME'")"
+    mysql -u root "$DB_NAME" < "$DUMP" || die "dump.sql import failed"
+  else warn "DB $DB_NAME already has tables - import skipped"; fi
+  ok "DB $DB_NAME: tables $(mysql -u root -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME'")"
   mkdir -p "$WEB_ROOT"
   rm -f "$WEB_ROOT/index.html"
-  cp -f "$WEB_SRC"/index.php "$WEB_ROOT/" || die "Нет index.php в $WEB_SRC"
+  cp -f "$WEB_SRC"/index.php "$WEB_ROOT/" || die "No index.php in $WEB_SRC"
   [ -d "$WEB_SRC/images" ] && cp -rf "$WEB_SRC/images" "$WEB_ROOT/"
   find "$WEB_SRC" -maxdepth 1 -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.css' \) -exec cp -f {} "$WEB_ROOT/" \;
   # Учётные данные БД в index.php (одинарные или двойные кавычки)
@@ -339,31 +344,31 @@ EOF
     -e "s/(\\\$dbname[[:space:]]*=[[:space:]]*)[\"'][^\"']*[\"']/\\1\"$DB_NAME\"/" \
     "$WEB_ROOT/index.php"
   if grep -q "\"$DB_NAME\"" "$WEB_ROOT/index.php" && grep -q "\"$DB_USER\"" "$WEB_ROOT/index.php"; then
-    ok "index.php: подключение к $DB_NAME под $DB_USER"
+    ok "index.php: connects to $DB_NAME as $DB_USER"
   else
-    warn "Имена переменных в index.php другие — поправьте вручную:"; grep -nE 'mysqli|PDO|\$[a-z_]+ *=' "$WEB_ROOT/index.php" | head -15
+    warn "index.php uses other variable names - edit manually:"; grep -nE 'mysqli|PDO|\$[a-z_]+ *=' "$WEB_ROOT/index.php" | head -15
   fi
   chown -R apache2:apache2 "$WEB_ROOT" 2>/dev/null || chown -R apache:apache "$WEB_ROOT" 2>/dev/null || true
   systemctl restart httpd2
-  curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/ | grep -q '^200$' && ok "Сайт отвечает 200" || warn "Сайт не вернул 200 — проверьте journalctl -u httpd2"
+  curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/ | grep -q '^200$' && ok "Site returns 200" || warn "Site did not return 200 - check journalctl -u httpd2"
 else
-  warn "Образ не подключён — веб-приложение пропущено. Подключите ISO и перезапустите скрипт."
+  warn "ISO not attached - web app skipped. Attach ISO and re-run."
 fi
 
 # ============================== МОДУЛЬ 3 =====================================
-step "CUPS: виртуальный PDF-принтер"
+step "CUPS: virtual PDF printer"
 if pkg_try cups cups-pdf; then
-  systemctl enable --now cups || die "cups не запустился"
+  systemctl enable --now cups || die "cups did not start"
   PDF_PPD="$(lpinfo -m 2>/dev/null | grep -i 'pdf' | head -1 | awk '{print $1}' || true)"
-  if lpstat -p PDF >/dev/null 2>&1; then warn "Принтер PDF уже есть"
-  else lpadmin -p PDF -E -v cups-pdf:/ ${PDF_PPD:+-m "$PDF_PPD"} || die "lpadmin не создал принтер"; fi
+  if lpstat -p PDF >/dev/null 2>&1; then warn "Printer PDF already exists"
+  else lpadmin -p PDF -E -v cups-pdf:/ ${PDF_PPD:+-m "$PDF_PPD"} || die "lpadmin did not create printer"; fi
   lpadmin -p PDF -o printer-is-shared=true
-  cupsctl --share-printers --remote-any || die "cupsctl не выполнен"
+  cupsctl --share-printers --remote-any || die "cupsctl failed"
   systemctl restart cups
-  lpstat -p PDF && ok "Принтер PDF опубликован: ipp://hq-srv.au-team.irpo:631/printers/PDF"
+  lpstat -p PDF && ok "Printer PDF shared: ipp://hq-srv.au-team.irpo:631/printers/PDF"
 fi
 
-step "rsyslog-сервер: /opt/<имя машины>/ (только удалённые логи, warning+)"
+step "rsyslog server: /opt/<hostname>/ (remote logs only, warning+)"
 pkg_try rsyslog-classic || pkg_install rsyslog
 mkdir -p /etc/rsyslog.d
 loaded() { grep -hEqs "^[[:space:]]*(\\\$ModLoad[[:space:]]+$1|module\(load=\"$1\")" /etc/rsyslog.conf /etc/rsyslog.d/*.conf; }
@@ -384,10 +389,10 @@ input(type="imtcp" port="514" ruleset="remote")
 EOF
 } > /etc/rsyslog.d/10-remote-server.conf
 rm -f /etc/rsyslog.d/90-remote.conf          # сервер не является клиентом самому себе
-rsyslogd -N1 >/dev/null 2>&1 || die "Ошибка в конфигурации rsyslog (rsyslogd -N1)"
+rsyslogd -N1 >/dev/null 2>&1 || die "rsyslog config error (rsyslogd -N1)"
 systemctl enable rsyslog >/dev/null 2>&1
-systemctl restart rsyslog || die "rsyslog не запустился"
-ss -tln | grep -q ':514 ' && ok "rsyslog принимает 514/tcp и 514/udp" || die "rsyslog не слушает 514"
+systemctl restart rsyslog || die "rsyslog did not start"
+ss -tln | grep -q ':514 ' && ok "rsyslog accepts 514/tcp and 514/udp" || die "rsyslog does not listen on 514"
 cat > /etc/logrotate.d/opt-remote-logs <<'EOF'
 /opt/*.log /opt/*/*.log {
     weekly
@@ -402,12 +407,13 @@ cat > /etc/logrotate.d/opt-remote-logs <<'EOF'
     endscript
 }
 EOF
-logrotate -d /etc/logrotate.d/opt-remote-logs >/dev/null 2>&1 && ok "logrotate: еженедельно, сжатие, от 10 МБ" || die "Ошибка в правиле logrotate"
+logrotate -d /etc/logrotate.d/opt-remote-logs >/dev/null 2>&1 && ok "logrotate: weekly, compressed, min 10 MB" || die "logrotate rule error"
 
-step "fail2ban для SSH (порт $SSH_PORT)"
+step "fail2ban for SSH (port $SSH_PORT)"
 pkg_install fail2ban python3-module-systemd iptables
 cat > /etc/fail2ban/jail.local <<EOF
 [DEFAULT]
+backend   = systemd
 banaction = iptables-multiport
 
 [sshd]
@@ -419,19 +425,38 @@ maxretry = 3
 findtime = 10m
 bantime  = 1m
 EOF
-fail2ban-client -t >/dev/null || die "Ошибка конфигурации fail2ban"
-systemctl enable fail2ban >/dev/null 2>&1
-systemctl restart fail2ban || die "fail2ban не запустился"
-sleep 2
-fail2ban-client status sshd && ok "Jail sshd: 3 попытки -> бан на 1 минуту" || die "Jail sshd не активен"
+# Если jail.conf испорчен ранее (sed старого скрипта) — вернуть штатный из пакета
+if ! fail2ban-client -t >/dev/null 2>&1; then
+  warn "fail2ban config test failed - restoring stock jail.conf"
+  mv -f /etc/fail2ban/jail.conf "/etc/fail2ban/jail.conf.broken.$(date +%s)" 2>/dev/null || true
+  rm -f /etc/fail2ban/jail.d/*.conf.rpmnew
+  apt-get install --reinstall -y fail2ban >/dev/null || warn "fail2ban reinstall failed"
+fi
+f2b_diag() {
+  echo "---- fail2ban-client -t ----"; fail2ban-client -t 2>&1 | tail -15
+  echo "---- journalctl -u fail2ban ----"; journalctl -u fail2ban -n 20 --no-pager 2>/dev/null || true
+}
+mkdir -p /run/fail2ban
+systemctl enable fail2ban >/dev/null 2>&1 || true
+if fail2ban-client -t >/dev/null 2>&1 && systemctl restart fail2ban; then
+  sleep 3
+  if fail2ban-client status sshd >/dev/null 2>&1; then
+    fail2ban-client status sshd
+    ok "Jail sshd: 3 attempts -> ban for 1 minute (port $SSH_PORT)"
+  else
+    f2b_diag; warn "fail2ban runs but jail sshd is not active - see output above"
+  fi
+else
+  f2b_diag; warn "fail2ban did not start - see output above, the rest of the script continues"
+fi
 
-step "Центр сертификации: ГОСТ Р 34.10-2012 (+ RSA-цепочка для совместимости браузеров)"
+step "Certificate authority: GOST R 34.10-2012 (+ RSA chain for browsers)"
 pkg_install openssl
 if pkg_try openssl-gost-engine; then control openssl-gost enabled >/dev/null 2>&1 || true; fi
 GOST_OK=0
 openssl list -public-key-algorithms 2>/dev/null | grep -qi 'gost2012_256' && GOST_OK=1
-[ "$GOST_OK" = 1 ] && ok "Алгоритмы ГОСТ доступны в OpenSSL (engine gost)" \
-                   || warn "ГОСТ-движок OpenSSL недоступен — будет выпущена только RSA-цепочка"
+[ "$GOST_OK" = 1 ] && ok "GOST algorithms available in OpenSSL (engine gost)" \
+                   || warn "OpenSSL GOST engine unavailable - RSA chain only"
 mkdir -p "$CA_DIR"; chmod 700 "$CA_DIR"
 # $1 = gost|rsa, $2 = путь к ключу
 gen_key() {
@@ -442,24 +467,24 @@ gen_key() {
 md_of() { [ "$1" = gost ] && echo "-md_gost12_256" || echo "-sha256"; }
 make_ca() {                 # корневой сертификат УЦ
   local a="$1" k="$CA_DIR/ca-$1.key" c="$CA_DIR/ca-$1.crt"
-  [ -s "$c" ] && { ok "УЦ $a уже существует"; return 0; }
-  gen_key "$a" "$k" || die "Не создан ключ УЦ $a"
+  [ -s "$c" ] && { ok "CA $a already exists"; return 0; }
+  gen_key "$a" "$k" || die "Failed to create CA key $a"
   openssl req -x509 -new $(md_of "$a") -key "$k" -days "$CA_DAYS" \
     -subj "/C=RU/O=AU-TEAM/CN=AU-TEAM Root CA ($a)" \
     -addext "basicConstraints=critical,CA:TRUE" \
-    -addext "keyUsage=critical,keyCertSign,cRLSign" -out "$c" || die "Не создан сертификат УЦ $a"
-  ok "УЦ $a: $c"
+    -addext "keyUsage=critical,keyCertSign,cRLSign" -out "$c" || die "Failed to create CA cert $a"
+  ok "CA $a: $c"
 }
 issue() {                   # $1 алгоритм, $2 короткое имя (web|docker) — срок CERT_DAYS
   local a="$1" n="$2" fq="$2.au-team.irpo" k="$CA_DIR/$2-$1.key" csr="$CA_DIR/$2-$1.csr" c="$CA_DIR/$2-$1.crt"
-  gen_key "$a" "$k" || die "Не создан ключ $fq ($a)"
+  gen_key "$a" "$k" || die "Failed to create key $fq ($a)"
   openssl req -new $(md_of "$a") -key "$k" -subj "/C=RU/O=AU-TEAM/CN=$fq" -out "$csr" || die "CSR $fq"
   printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\n' "$fq" > "$CA_DIR/$n.ext"
   openssl x509 -req -in "$csr" -CA "$CA_DIR/ca-$a.crt" -CAkey "$CA_DIR/ca-$a.key" -CAcreateserial \
-    $(md_of "$a") -days "$CERT_DAYS" -extfile "$CA_DIR/$n.ext" -out "$c" || die "Не подписан сертификат $fq ($a)"
-  openssl verify -CAfile "$CA_DIR/ca-$a.crt" "$c" >/dev/null || die "Цепочка $fq ($a) не проверяется"
+    $(md_of "$a") -days "$CERT_DAYS" -extfile "$CA_DIR/$n.ext" -out "$c" || die "Failed to sign cert $fq ($a)"
+  openssl verify -CAfile "$CA_DIR/ca-$a.crt" "$c" >/dev/null || die "Chain $fq ($a) does not verify"
   cat "$c" "$CA_DIR/ca-$a.crt" > "$CA_DIR/$n-$a.fullchain.crt"
-  ok "Выдан $fq ($a) на $CERT_DAYS дней"
+  ok "Issued $fq ($a) for $CERT_DAYS days"
 }
 ALGS="rsa"; [ "$GOST_OK" = 1 ] && ALGS="gost rsa"
 for a in $ALGS; do make_ca "$a"; issue "$a" web; issue "$a" docker; done
@@ -473,10 +498,10 @@ for a in $ALGS; do for n in web docker; do
   cp -f "$CA_DIR/$n-$a.key" "$SU_HOME/certs/$n-$a.key"
 done; done
 chown -R "$SSH_USER": "$SU_HOME/certs"; chmod 700 "$SU_HOME/certs"; chmod 600 "$SU_HOME/certs"/*
-ok "Корневые сертификаты: /raid/nfs/ca (для HQ-CLI); комплект для ISP: $SU_HOME/certs"
-echo "На ISP после этого выполните: ./isp.sh tls"
+ok "Root certs: /raid/nfs/ca (for HQ-CLI); bundle for ISP: $SU_HOME/certs"
+echo "Now run on ISP: ./isp.sh tls"
 
-step "Мониторинг: Prometheus + node_exporter + Grafana -> http://mon.au-team.irpo"
+step "Monitoring: Prometheus + node_exporter + Grafana -> http://mon.au-team.irpo"
 # Выбор: открытое ПО из репозитория ALT; node_exporter даёт ЦП/ОЗУ/диск,
 # Grafana — визуализация и вход admin/P@ssw0rd. Grafana: 127.0.0.1:3000,
 # Prometheus: 127.0.0.1:9090, снаружи только Apache :80 с доступом из сетей HQ.
@@ -499,7 +524,7 @@ if [ -f /etc/sysconfig/prometheus ]; then
     sed -i -E 's|^(ARGS=")|\1--web.listen-address=127.0.0.1:9090 |' /etc/sysconfig/prometheus
 fi
 enable_first prometheus
-systemctl restart prometheus || die "prometheus не перезапустился"
+systemctl restart prometheus || die "prometheus did not restart"
 # Grafana: слушает только localhost, учётная запись admin
 backup /etc/grafana/grafana.ini
 sed -i -E '/^\[server\]/,/^\[/{s|^;?http_addr *=.*|http_addr = 127.0.0.1|;s|^;?http_port *=.*|http_port = 3000|;s|^;?domain *=.*|domain = mon.au-team.irpo|}' /etc/grafana/grafana.ini
@@ -534,23 +559,23 @@ panel() {   # $1 id, $2 заголовок, $3 PromQL, $4 y
 EOF
 }
 {
-  echo '{"uid": "servers", "title": "HQ-SRV и BR-SRV", "schemaVersion": 36, "refresh": "30s",'
+  echo '{"uid": "servers", "title": "HQ-SRV and BR-SRV", "schemaVersion": 36, "refresh": "30s",'
   echo ' "time": {"from": "now-1h", "to": "now"}, "panels": ['
-  panel 1 "Загрузка ЦП, %" '100 - avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100' 0; echo ','
-  panel 2 "Занятая ОЗУ, %" '(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100' 8; echo ','
-  panel 3 "Занято на диске /, %" '(1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}) * 100' 16
+  panel 1 "CPU load, %" '100 - avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100' 0; echo ','
+  panel 2 "RAM used, %" '(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100' 8; echo ','
+  panel 3 "Disk / used, %" '(1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}) * 100' 16
   echo ']}'
 } > /var/lib/grafana/dashboards/servers.json
-python3 -m json.tool /var/lib/grafana/dashboards/servers.json >/dev/null || die "Ошибка в JSON дашборда"
+python3 -m json.tool /var/lib/grafana/dashboards/servers.json >/dev/null || die "Dashboard JSON error"
 chown -R grafana: /var/lib/grafana 2>/dev/null || chown -R _grafana: /var/lib/grafana 2>/dev/null || true
 GRAFANA_SVC=grafana-server; systemctl list-unit-files grafana-server.service | grep -q grafana-server || GRAFANA_SVC=grafana
 systemctl enable "$GRAFANA_SVC" >/dev/null 2>&1
-systemctl restart "$GRAFANA_SVC" || die "Grafana не запустилась"
+systemctl restart "$GRAFANA_SVC" || die "Grafana did not start"
 sleep 8
 # Пароль задаётся и при уже созданной БД Grafana
 grafana-cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini admin reset-admin-password "$MON_PASS" >/dev/null 2>&1 \
   || grafana cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini admin reset-admin-password "$MON_PASS" >/dev/null 2>&1 \
-  || warn "Не удалось сбросить пароль admin через grafana-cli"
+  || warn "Failed to reset admin password via grafana-cli"
 # Apache: виртуальный хост mon.au-team.irpo -> Grafana, только для сетей HQ
 command -v a2enmod >/dev/null && { a2enmod proxy >/dev/null 2>&1 || true; a2enmod proxy_http >/dev/null 2>&1 || true; }
 SITES=/etc/httpd2/conf/sites-available
@@ -580,15 +605,15 @@ else
   ln -sf "$SITES/000-webapp.conf" /etc/httpd2/conf/sites-enabled/000-webapp.conf
   ln -sf "$SITES/mon.conf" /etc/httpd2/conf/sites-enabled/mon.conf
 fi
-httpd2 -t || die "Ошибка конфигурации Apache (httpd2 -t)"
-systemctl restart httpd2 || die "httpd2 не перезапустился"
+httpd2 -t || die "Apache config error (httpd2 -t)"
+systemctl restart httpd2 || die "httpd2 did not restart"
 sleep 2
 curl -s -o /dev/null -w '%{http_code}' -H 'Host: mon.au-team.irpo' http://127.0.0.1/login | grep -q '^200$' \
-  && ok "Мониторинг: http://mon.au-team.irpo (admin / $MON_PASS), Grafana на 127.0.0.1:3000" \
-  || warn "mon.au-team.irpo не вернул 200 — journalctl -u $GRAFANA_SVC"
+  && ok "Monitoring: http://mon.au-team.irpo (admin / $MON_PASS), Grafana at 127.0.0.1:3000" \
+  || warn "mon.au-team.irpo did not return 200 - journalctl -u $GRAFANA_SVC"
 curl -s http://127.0.0.1:9090/api/v1/targets 2>/dev/null | grep -o '"health":"[a-z]*"' | sort | uniq -c || true
 
 # ============================== ИТОГ =========================================
-step "Итоговая проверка"
+step "Final check"
 ip -br -4 addr; cat /proc/mdstat; df -h /raid; exportfs -v
-echo -e "${C_G}HQ-SRV настроен. Лог: $LOG_FILE${C_N}"
+echo -e "${C_G}HQ-SRV is configured. Log: $LOG_FILE${C_N}"

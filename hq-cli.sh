@@ -31,40 +31,40 @@ step() { echo -e "\n${C_B}==> $*${C_N}"; }
 ok()   { echo -e "${C_G}[ OK ]${C_N} $*"; }
 warn() { echo -e "${C_Y}[WARN]${C_N} $*"; }
 die()  { echo -e "${C_R}[FAIL]${C_N} $*"; exit 1; }
-trap 'rc=$?; echo -e "${C_R}[FAIL]${C_N} строка ${LINENO}: «${BASH_COMMAND}» вернула код ${rc}. Лог: ${LOG_FILE}"' ERR
+trap 'rc=$?; echo -e "${C_R}[FAIL]${C_N} line ${LINENO}: "${BASH_COMMAND}" returned ${rc}. Log: ${LOG_FILE}"' ERR
 
-[ "$(id -u)" -eq 0 ] || die "Запустите скрипт от root"
-[ -r /etc/altlinux-release ] || warn "Нет /etc/altlinux-release — скрипт рассчитан на ALT Linux p10"
+[ "$(id -u)" -eq 0 ] || die "Run this script as root"
+[ -r /etc/altlinux-release ] || warn "No /etc/altlinux-release - script is made for ALT Linux p10"
 
 backup() { [ -e "$1" ] && [ ! -e "$1.orig" ] && cp -a "$1" "$1.orig"; return 0; }
 
 APT_UPDATED=0
 apt_update() {
   [ "$APT_UPDATED" -eq 1 ] && return 0
-  apt-get update -q || die "apt-get update не выполнен — проверьте Интернет/DNS"
+  apt-get update -q || die "apt-get update failed - check Internet/DNS"
   APT_UPDATED=1
 }
 pkg_install() {             # установка с проверкой наличия в репозитории
   apt_update
   local p miss=()
   for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 || miss+=("$p"); done
-  [ ${#miss[@]} -eq 0 ] || die "Нет в репозитории: ${miss[*]}"
-  apt-get install -y "$@" || die "Ошибка установки: $*"
-  for p in "$@"; do rpm -q "$p" >/dev/null 2>&1 || rpm -q --whatprovides "$p" >/dev/null 2>&1 || die "Пакет $p не установлен"; done
-  ok "Пакеты установлены: $*"
+  [ ${#miss[@]} -eq 0 ] || die "Not in repository: ${miss[*]}"
+  apt-get install -y "$@" || die "Install failed: $*"
+  for p in "$@"; do rpm -q "$p" >/dev/null 2>&1 || rpm -q --whatprovides "$p" >/dev/null 2>&1 || die "Package $p is not installed"; done
+  ok "Packages installed: $*"
 }
-check_iface() { ip link show "$1" >/dev/null 2>&1 || die "Интерфейс $1 не найден (ip -br link)"; ok "Интерфейс $1 есть"; }
+check_iface() { ip link show "$1" >/dev/null 2>&1 || die "Interface $1 not found (see: ip -br link)"; ok "Interface $1 found"; }
 set_hostname() {
-  hostnamectl set-hostname "$1" || die "hostnamectl не сработал"
+  hostnamectl set-hostname "$1" || die "hostnamectl failed"
   if [ -f /etc/sysconfig/network ]; then
     sed -i '/^HOSTNAME=/d' /etc/sysconfig/network; echo "HOSTNAME=$1" >> /etc/sysconfig/network
   fi
-  [ "$(hostname)" = "$1" ] && ok "Имя хоста: $1" || die "Имя хоста не применилось"
+  [ "$(hostname)" = "$1" ] && ok "Hostname: $1" || die "Hostname was not applied"
 }
 set_tz() {
   pkg_install tzdata                              # tzdata — до смены пояса
-  timedatectl set-timezone "$TZ_NAME" || die "Не удалось установить часовой пояс"
-  readlink -f /etc/localtime | grep -q "$TZ_NAME" && ok "Часовой пояс: $TZ_NAME" || die "Часовой пояс не применился"
+  timedatectl set-timezone "$TZ_NAME" || die "Failed to set timezone"
+  readlink -f /etc/localtime | grep -q "$TZ_NAME" && ok "Timezone: $TZ_NAME" || die "Timezone was not applied"
 }
 # etcnet: $1 iface, $2 BOOTPROTO, $3 адрес/маска, $4 шлюз, $5 DNS
 etcnet_eth() {
@@ -90,16 +90,17 @@ enable_forward() {
     sed -i -E 's/^\s*net\.ipv4\.ip_forward.*/net.ipv4.ip_forward = 1/' "$f"
   else echo "net.ipv4.ip_forward = 1" >> "$f"; fi
   sysctl -w net.ipv4.ip_forward=1 >/dev/null
-  [ "$(cat /proc/sys/net/ipv4/ip_forward)" = "1" ] && ok "IP forwarding включён" || die "ip_forward не включён"
+  [ "$(cat /proc/sys/net/ipv4/ip_forward)" = "1" ] && ok "IP forwarding enabled" || die "ip_forward is not enabled"
 }
 restart_network() {
-  systemctl restart network || die "Не удалось перезапустить network"
-  sleep 3; ok "Сеть перезапущена"
+  chattr -i /etc/resolv.conf 2>/dev/null || true
+  systemctl restart network || die "Failed to restart network"
+  sleep 3; ok "Network restarted"
 }
 wait_inet() {
   local i; for i in $(seq 1 40); do
-    ping -c1 -W1 77.88.8.8 >/dev/null 2>&1 && { ok "Интернет доступен"; return 0; }; sleep 1
-  done; die "Нет связи с 77.88.8.8 — проверьте адресацию/NAT"
+    ping -c1 -W1 77.88.8.8 >/dev/null 2>&1 && { ok "Internet is reachable"; return 0; }; sleep 1
+  done; die "No reply from 77.88.8.8 - check addressing/NAT"
 }
 SSHD_CFG=/etc/openssh/sshd_config
 sshd_set() {   # удаляет все варианты директивы и ставит её в начало файла (до блоков Match)
@@ -107,32 +108,32 @@ sshd_set() {   # удаляет все варианты директивы и с
   sed -i "1i $1 $2" "$SSHD_CFG"
 }
 sshd_apply() {
-  /usr/sbin/sshd -t || die "Ошибка в $SSHD_CFG (sshd -t)"
+  /usr/sbin/sshd -t || die "Error in $SSHD_CFG (sshd -t)"
   systemctl enable sshd >/dev/null 2>&1 || true
-  systemctl restart sshd || die "sshd не перезапустился"
-  ss -tln | grep -q ":$SSH_PORT " && ok "sshd слушает порт $SSH_PORT" || die "sshd не слушает $SSH_PORT"
+  systemctl restart sshd || die "sshd did not restart"
+  ss -tln | grep -q ":$SSH_PORT " && ok "sshd listens on port $SSH_PORT" || die "sshd does not listen on $SSH_PORT"
 }
 
 pkg_try() {                 # нефатальная установка: вернёт 1, если пакета нет
   apt_update
   local p
-  for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 || { warn "Пакет $p не найден в репозитории"; return 1; }; done
-  apt-get install -y "$@" || { warn "Не удалось установить: $*"; return 1; }
-  ok "Пакеты установлены: $*"
+  for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 || { warn "Package $p not found in repository"; return 1; }; done
+  apt-get install -y "$@" || { warn "Failed to install: $*"; return 1; }
+  ok "Packages installed: $*"
 }
 create_user() {             # $1 имя, $2 UID (может быть пустым), $3 пароль; группа wheel
   local u="$1" uid="$2" pw="$3"
   if id "$u" >/dev/null 2>&1; then
-    warn "Пользователь $u уже существует — обновляю пароль и группы"
-    if [ -n "$uid" ] && [ "$(id -u "$u")" != "$uid" ]; then warn "UID $u = $(id -u "$u"), ожидался $uid"; fi
+    warn "User $u already exists - updating password and groups"
+    if [ -n "$uid" ] && [ "$(id -u "$u")" != "$uid" ]; then warn "UID $u = $(id -u "$u"), expected $uid"; fi
   elif [ -n "$uid" ]; then
-    useradd -m -u "$uid" -G wheel -s /bin/bash "$u" || die "useradd $u не выполнен"
+    useradd -m -u "$uid" -G wheel -s /bin/bash "$u" || die "useradd $u failed"
   else
-    useradd -m -G wheel -s /bin/bash "$u" || die "useradd $u не выполнен"
+    useradd -m -G wheel -s /bin/bash "$u" || die "useradd $u failed"
   fi
-  echo "$u:$pw" | chpasswd || die "chpasswd для $u не выполнен"
+  echo "$u:$pw" | chpasswd || die "chpasswd for $u failed"
   usermod -aG wheel "$u"
-  id -nG "$u" | grep -qw wheel && ok "Пользователь $u (uid $(id -u "$u")) в группе wheel" || die "$u не в wheel"
+  id -nG "$u" | grep -qw wheel && ok "User $u (uid $(id -u "$u")) is in group wheel" || die "$u is not in wheel"
 }
 install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 содержимое
   pkg_install sudo
@@ -140,10 +141,10 @@ install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 сод�
   local f="/etc/sudoers.d/$1"
   printf '%s\n' "$2" > "$f.tmp"          # файлы с точкой sudo игнорирует — безопасная проверка
   chmod 0400 "$f.tmp"
-  visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Синтаксическая ошибка в правиле sudo $1"; }
+  visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Syntax error in sudo rule $1"; }
   mv -f "$f.tmp" "$f"; chown root:root "$f"; chmod 0400 "$f"
-  visudo -c >/dev/null || die "visudo -c: ошибка в конфигурации sudo"
-  ok "sudo: $f (права 0400)"
+  visudo -c >/dev/null || die "visudo -c: sudo config error"
+  ok "sudo: $f (mode 0400)"
 }
 chrony_client() {           # $1 — адрес NTP-сервера ISP
   pkg_install chrony
@@ -155,18 +156,19 @@ makestep 1.0 3
 rtcsync
 EOF
   systemctl enable chronyd >/dev/null 2>&1
-  systemctl restart chronyd || die "chronyd не запустился"
-  ok "chrony-клиент сервера $1"
+  systemctl restart chronyd || die "chronyd did not start"
+  ok "chrony client of server $1"
 }
 rsyslog_client() {          # $1 — сервер сбора логов; уровень warning и выше
   if pkg_try rsyslog-classic || pkg_try rsyslog; then
     mkdir -p /etc/rsyslog.d
     echo "*.warning @@$1:514" > /etc/rsyslog.d/90-remote.conf
     systemctl enable rsyslog >/dev/null 2>&1 || true
-    systemctl restart rsyslog && ok "rsyslog: *.warning -> $1:514/tcp" || warn "rsyslog не перезапустился"
-  else warn "rsyslog не установлен — пропуск"; fi
+    systemctl restart rsyslog && ok "rsyslog: *.warning -> $1:514/tcp" || warn "rsyslog did not restart"
+  else warn "rsyslog not installed - skipped"; fi
 }
 set_resolv() {              # $1 iface (etcnet), $2 nameserver
+  chattr -i /etc/resolv.conf 2>/dev/null || true   # снять защиту, если её ставил старый скрипт
   printf 'search au-team.irpo\nnameserver %s\n' "$2" > "/etc/net/ifaces/$1/resolv.conf"
   if command -v resolvconf >/dev/null 2>&1; then
     resolvconf -u >/dev/null 2>&1 || true
@@ -177,43 +179,43 @@ set_resolv() {              # $1 iface (etcnet), $2 nameserver
 enable_first() {            # запускает первую существующую службу из списка
   local s; for s in "$@"; do
     if systemctl list-unit-files "$s.service" 2>/dev/null | grep -q "^$s.service"; then
-      systemctl enable --now "$s" && { ENABLED_SVC="$s"; ok "Служба $s запущена"; return 0; }
+      systemctl enable --now "$s" && { ENABLED_SVC="$s"; ok "Service $s started"; return 0; }
     fi
-  done; die "Не найдена/не запустилась ни одна из служб: $*"
+  done; die "None of these services found/started: $*"
 }
 
 # ============================== МОДУЛЬ 1 =====================================
-step "Имя устройства"
+step "Hostname"
 check_iface "$IF_LAN"
 set_hostname "$HOST_FQDN"
 
-step "Сеть через NetworkManager (DHCP)"
-command -v nmcli >/dev/null || die "nmcli не найден — на HQ-CLI сеть должна управляться NetworkManager"
-systemctl is-active --quiet NetworkManager || systemctl enable --now NetworkManager || die "NetworkManager не запущен"
+step "Network via NetworkManager (DHCP)"
+command -v nmcli >/dev/null || die "nmcli not found - HQ-CLI network must be managed by NetworkManager"
+systemctl is-active --quiet NetworkManager || systemctl enable --now NetworkManager || die "NetworkManager is not running"
 CON="$(nmcli -t -f NAME,DEVICE con show | awk -F: -v d="$IF_LAN" '$2==d{print $1; exit}' || true)"
 if [ -z "$CON" ]; then
-  nmcli con add type ethernet ifname "$IF_LAN" con-name "$IF_LAN" || die "Не удалось создать подключение"
+  nmcli con add type ethernet ifname "$IF_LAN" con-name "$IF_LAN" || die "Failed to create connection"
   CON="$IF_LAN"
 fi
 nmcli con mod "$CON" ipv4.method auto ipv4.addresses "" ipv4.gateway "" \
   ipv4.ignore-auto-dns no ipv4.dhcp-send-hostname yes ipv4.dhcp-hostname "$HOST_SHORT" \
-  connection.autoconnect yes || die "nmcli con mod не выполнен"
+  connection.autoconnect yes || die "nmcli con mod failed"
 nmcli con down "$CON" >/dev/null 2>&1 || true
-nmcli con up "$CON" || die "Подключение $CON не поднялось"
+nmcli con up "$CON" || die "Connection $CON did not come up"
 for i in $(seq 1 20); do ip -4 addr show "$IF_LAN" | grep -q 'inet ' && break; sleep 1; done
 CUR_IP="$(ip -4 -o addr show "$IF_LAN" | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
-[ -n "$CUR_IP" ] || die "Адрес по DHCP не получен — проверьте HQ-RTR (dnsmasq) и VLAN 200"
-ok "Получен адрес $CUR_IP"
-[ "$CUR_IP" = "$EXPECTED_IP" ] || warn "Адрес $CUR_IP, а в DNS hq-cli = $EXPECTED_IP. Проверьте dhcp-host на HQ-RTR"
-grep -q "nameserver $HQ_SRV" /etc/resolv.conf && ok "DNS от DHCP: $HQ_SRV" || warn "В resolv.conf нет $HQ_SRV"
-grep -q 'au-team.irpo' /etc/resolv.conf && ok "DNS-суффикс au-team.irpo получен" || warn "Нет суффикса au-team.irpo"
+[ -n "$CUR_IP" ] || die "No DHCP address - check HQ-RTR (dnsmasq) and VLAN 200"
+ok "Got address $CUR_IP"
+[ "$CUR_IP" = "$EXPECTED_IP" ] || warn "Address is $CUR_IP, but DNS hq-cli = $EXPECTED_IP. Check dhcp-host on HQ-RTR"
+grep -q "nameserver $HQ_SRV" /etc/resolv.conf && ok "DNS from DHCP: $HQ_SRV" || warn "resolv.conf has no $HQ_SRV"
+grep -q 'au-team.irpo' /etc/resolv.conf && ok "DNS suffix au-team.irpo received" || warn "No suffix au-team.irpo"
 wait_inet
 
-step "Часовой пояс и NTP"
+step "Timezone and NTP"
 set_tz
 chrony_client "$NTP_SRV"
 
-step "Пользователь $SSH_USER и SSH $SSH_PORT (для Ansible)"
+step "User $SSH_USER and SSH $SSH_PORT (for Ansible)"
 pkg_install openssh-server python3
 create_user "$SSH_USER" "$SSH_UID" "$PASS"
 install_sudoers "$SSH_USER" "$SSH_USER ALL=(ALL:ALL) NOPASSWD: ALL"
@@ -222,71 +224,71 @@ sshd_set PermitRootLogin no
 sshd_apply
 
 # ============================== МОДУЛЬ 2 =====================================
-step "Ввод в домен $AD_DOMAIN"
+step "Joining domain $AD_DOMAIN"
 pkg_install task-auth-ad-sssd
-getent hosts br-srv.au-team.irpo >/dev/null || die "Не разрешается br-srv.au-team.irpo — проверьте DNS на HQ-SRV"
+getent hosts br-srv.au-team.irpo >/dev/null || die "br-srv.au-team.irpo does not resolve - check DNS on HQ-SRV"
 if command -v host >/dev/null 2>&1; then
-  host -t SRV "_ldap._tcp.$AD_DOMAIN" >/dev/null && ok "SRV-записи домена разрешаются" || warn "Нет SRV _ldap._tcp — проверьте пересылку на HQ-SRV"
+  host -t SRV "_ldap._tcp.$AD_DOMAIN" >/dev/null && ok "Domain SRV records resolve" || warn "No SRV _ldap._tcp - check forwarding on HQ-SRV"
 fi
 if [ -f /etc/sssd/sssd.conf ] && grep -qi "$AD_DOMAIN" /etc/sssd/sssd.conf; then
-  warn "Машина уже в домене — ввод пропущен"
+  warn "Already joined - skipped"
 else
   system-auth write ad "$AD_DOMAIN" "$HOST_SHORT" "$AD_WORKGROUP" "$AD_ADMIN" "$AD_PASS" \
-    || die "system-auth write ad завершился с ошибкой (DC доступен? время синхронно?)"
+    || die "system-auth write ad failed (DC reachable? time in sync?)"
 fi
 systemctl enable sssd >/dev/null 2>&1 || true
-systemctl restart sssd || die "sssd не запустился"
+systemctl restart sssd || die "sssd did not start"
 sleep 3
-if id hquser1 >/dev/null 2>&1 || id "hquser1@$AD_DOMAIN" >/dev/null 2>&1; then ok "Доменные пользователи видны (id hquser1)"
-else warn "id hquser1 не разрешается — проверьте 'systemctl status sssd'"; fi
+if id hquser1 >/dev/null 2>&1 || id "hquser1@$AD_DOMAIN" >/dev/null 2>&1; then ok "Domain users are visible (id hquser1)"
+else warn "id hquser1 does not resolve - check 'systemctl status sssd'"; fi
 
-step "sudo для группы hq: только cat, grep, id"
+step "sudo for group hq: only cat, grep, id"
 control sudo public 2>/dev/null || true          # sudo доступен не только wheel (ALT control)
 P_CAT="$(command -v cat)"; P_GREP="$(command -v grep)"; P_ID="$(command -v id)"
 install_sudoers "hq" "%hq ALL=(ALL) $P_CAT, $P_GREP, $P_ID
 %hq@$AD_DOMAIN ALL=(ALL) $P_CAT, $P_GREP, $P_ID"
 
-step "NFS: автомонтирование $HQ_SRV:/raid/nfs -> /mnt/nfs"
+step "NFS: automount $HQ_SRV:/raid/nfs -> /mnt/nfs"
 pkg_install nfs-clients
 mkdir -p /mnt/nfs
 sed -i '\#[[:space:]]/mnt/nfs[[:space:]]#d' /etc/fstab
 echo "$HQ_SRV:/raid/nfs /mnt/nfs nfs defaults,_netdev,x-systemd.automount 0 0" >> /etc/fstab
 systemctl daemon-reload
 systemctl restart remote-fs.target >/dev/null 2>&1 || true
-mount -a || warn "mount -a вернул ошибку"
+mount -a || warn "mount -a returned an error"
 if ls /mnt/nfs >/dev/null 2>&1 && touch /mnt/nfs/.hq-cli-test 2>/dev/null; then
-  rm -f /mnt/nfs/.hq-cli-test; ok "/mnt/nfs смонтирован, запись работает"
-else warn "/mnt/nfs недоступен — проверьте экспорт на HQ-SRV"; fi
+  rm -f /mnt/nfs/.hq-cli-test; ok "/mnt/nfs mounted, write works"
+else warn "/mnt/nfs unavailable - check export on HQ-SRV"; fi
 
-step "Яндекс Браузер"
-if rpm -q yandex-browser-stable >/dev/null 2>&1; then ok "Уже установлен"
-elif pkg_try yandex-browser-stable; then ok "Яндекс Браузер установлен"
-else warn "Пакета нет в репозитории — установите через Центр приложений или .rpm с browser.yandex.ru"; fi
+step "Yandex Browser"
+if rpm -q yandex-browser-stable >/dev/null 2>&1; then ok "Already installed"
+elif pkg_try yandex-browser-stable; then ok "Yandex Browser installed"
+else warn "Package not in repository - install from App Center or .rpm from browser.yandex.ru"; fi
 
 # ============================== МОДУЛЬ 3 =====================================
-step "Принтер PDF с HQ-SRV по умолчанию"
+step "Printer PDF from HQ-SRV as default"
 if pkg_try cups; then
-  systemctl enable --now cups || warn "cups не запустился"
+  systemctl enable --now cups || warn "cups did not start"
   URI="ipp://hq-srv.au-team.irpo:631/printers/PDF"
   lpadmin -p PDF -E -v "$URI" -m everywhere 2>/dev/null \
     || lpadmin -p PDF -E -v "$URI" -m raw 2>/dev/null \
-    || warn "Принтер не добавлен (HQ-SRV/CUPS доступен?)"
+    || warn "Printer not added (is HQ-SRV/CUPS reachable?)"
   if lpstat -p PDF >/dev/null 2>&1; then
     lpadmin -d PDF; lpoptions -d PDF >/dev/null
-    lpstat -d | grep -q PDF && ok "PDF — принтер по умолчанию"
+    lpstat -d | grep -q PDF && ok "PDF is the default printer"
   fi
 fi
 
-step "Доверие к корневым сертификатам УЦ HQ-SRV"
+step "Trusting HQ-SRV root CA certificates"
 CA_SRC=/mnt/nfs/ca
 if ls "$CA_SRC"/ca-*.crt >/dev/null 2>&1; then
   pkg_try openssl-gost-engine && { control openssl-gost enabled >/dev/null 2>&1 || true; }
   # 1) Системное хранилище (curl, wget, приложения на OpenSSL/GnuTLS)
   mkdir -p /etc/pki/ca-trust/source/anchors
   cp -f "$CA_SRC"/ca-*.crt /etc/pki/ca-trust/source/anchors/
-  update-ca-trust extract 2>/dev/null || update-ca-trust || warn "update-ca-trust не выполнен"
-  ok "Корневые сертификаты добавлены в системное хранилище"
-  # 2) NSS (Яндекс Браузер/Chromium): /etc/skel и существующие профили
+  update-ca-trust extract 2>/dev/null || update-ca-trust || warn "update-ca-trust failed"
+  ok "Root certs added to system store"
+  # 2) NSS (Yandex Browser/Chromium): /etc/skel и существующие профили
   if pkg_try nss-utils; then
     add_nss() {
       local db="$1" owner="$2" c
@@ -304,7 +306,7 @@ if ls "$CA_SRC"/ca-*.crt >/dev/null 2>&1; then
     for h in /home/*; do
       u="$(basename "$h")"; id "$u" >/dev/null 2>&1 && add_nss "$h/.pki/nssdb" "$u"
     done
-    ok "Сертификаты УЦ добавлены в NSS (Яндекс Браузер)"
+    ok "CA certs added to NSS (Yandex Browser)"
   fi
   # 3) Firefox — через политики
   mkdir -p /etc/firefox/policies
@@ -315,22 +317,22 @@ if ls "$CA_SRC"/ca-*.crt >/dev/null 2>&1; then
     done
     echo ']}}}'
   } > /etc/firefox/policies/policies.json
-  python3 -m json.tool /etc/firefox/policies/policies.json >/dev/null && ok "Политика Firefox: /etc/firefox/policies/policies.json"
+  python3 -m json.tool /etc/firefox/policies/policies.json >/dev/null && ok "Firefox policy: /etc/firefox/policies/policies.json"
   # Проверка
   for n in web docker; do
     code="$(curl -s -o /dev/null -w '%{http_code}' "https://$n.au-team.irpo/" || true)"
     case "$code" in
-      200|301|302|401) ok "https://$n.au-team.irpo — сертификат принят (HTTP $code)";;
-      *) warn "https://$n.au-team.irpo — нет ответа/ошибка TLS (код '$code'). Выполнен ли ./isp.sh tls?";;
+      200|301|302|401) ok "https://$n.au-team.irpo - certificate accepted (HTTP $code)";;
+      *) warn "https://$n.au-team.irpo - no reply/TLS error (code '$code'). Was ./isp.sh tls run?";;
     esac
   done
 else
-  warn "Нет $CA_SRC/ca-*.crt — сначала hq-srv.sh (УЦ) и работающий /mnt/nfs"
+  warn "No $CA_SRC/ca-*.crt - run hq-srv.sh (CA) first and make /mnt/nfs work"
 fi
 
 # ============================== ИТОГ =========================================
-step "Итоговая проверка"
+step "Final check"
 ip -br -4 addr; cat /etc/resolv.conf
 df -h /mnt/nfs 2>/dev/null || true
-echo -e "${C_G}HQ-CLI настроен. Лог: $LOG_FILE${C_N}"
-echo "Проверьте вход доменным пользователем hquser1 (пароль $PASS) в графическом сеансе."
+echo -e "${C_G}HQ-CLI is configured. Log: $LOG_FILE${C_N}"
+echo "Check graphical login as domain user hquser1 (password $PASS)."

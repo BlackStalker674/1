@@ -40,40 +40,40 @@ step() { echo -e "\n${C_B}==> $*${C_N}"; }
 ok()   { echo -e "${C_G}[ OK ]${C_N} $*"; }
 warn() { echo -e "${C_Y}[WARN]${C_N} $*"; }
 die()  { echo -e "${C_R}[FAIL]${C_N} $*"; exit 1; }
-trap 'rc=$?; echo -e "${C_R}[FAIL]${C_N} строка ${LINENO}: «${BASH_COMMAND}» вернула код ${rc}. Лог: ${LOG_FILE}"' ERR
+trap 'rc=$?; echo -e "${C_R}[FAIL]${C_N} line ${LINENO}: "${BASH_COMMAND}" returned ${rc}. Log: ${LOG_FILE}"' ERR
 
-[ "$(id -u)" -eq 0 ] || die "Запустите скрипт от root"
-[ -r /etc/altlinux-release ] || warn "Нет /etc/altlinux-release — скрипт рассчитан на ALT Linux p10"
+[ "$(id -u)" -eq 0 ] || die "Run this script as root"
+[ -r /etc/altlinux-release ] || warn "No /etc/altlinux-release - script is made for ALT Linux p10"
 
 backup() { [ -e "$1" ] && [ ! -e "$1.orig" ] && cp -a "$1" "$1.orig"; return 0; }
 
 APT_UPDATED=0
 apt_update() {
   [ "$APT_UPDATED" -eq 1 ] && return 0
-  apt-get update -q || die "apt-get update не выполнен — проверьте Интернет/DNS"
+  apt-get update -q || die "apt-get update failed - check Internet/DNS"
   APT_UPDATED=1
 }
 pkg_install() {             # установка с проверкой наличия в репозитории
   apt_update
   local p miss=()
   for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 || miss+=("$p"); done
-  [ ${#miss[@]} -eq 0 ] || die "Нет в репозитории: ${miss[*]}"
-  apt-get install -y "$@" || die "Ошибка установки: $*"
-  for p in "$@"; do rpm -q "$p" >/dev/null 2>&1 || rpm -q --whatprovides "$p" >/dev/null 2>&1 || die "Пакет $p не установлен"; done
-  ok "Пакеты установлены: $*"
+  [ ${#miss[@]} -eq 0 ] || die "Not in repository: ${miss[*]}"
+  apt-get install -y "$@" || die "Install failed: $*"
+  for p in "$@"; do rpm -q "$p" >/dev/null 2>&1 || rpm -q --whatprovides "$p" >/dev/null 2>&1 || die "Package $p is not installed"; done
+  ok "Packages installed: $*"
 }
-check_iface() { ip link show "$1" >/dev/null 2>&1 || die "Интерфейс $1 не найден (ip -br link)"; ok "Интерфейс $1 есть"; }
+check_iface() { ip link show "$1" >/dev/null 2>&1 || die "Interface $1 not found (see: ip -br link)"; ok "Interface $1 found"; }
 set_hostname() {
-  hostnamectl set-hostname "$1" || die "hostnamectl не сработал"
+  hostnamectl set-hostname "$1" || die "hostnamectl failed"
   if [ -f /etc/sysconfig/network ]; then
     sed -i '/^HOSTNAME=/d' /etc/sysconfig/network; echo "HOSTNAME=$1" >> /etc/sysconfig/network
   fi
-  [ "$(hostname)" = "$1" ] && ok "Имя хоста: $1" || die "Имя хоста не применилось"
+  [ "$(hostname)" = "$1" ] && ok "Hostname: $1" || die "Hostname was not applied"
 }
 set_tz() {
   pkg_install tzdata                              # tzdata — до смены пояса
-  timedatectl set-timezone "$TZ_NAME" || die "Не удалось установить часовой пояс"
-  readlink -f /etc/localtime | grep -q "$TZ_NAME" && ok "Часовой пояс: $TZ_NAME" || die "Часовой пояс не применился"
+  timedatectl set-timezone "$TZ_NAME" || die "Failed to set timezone"
+  readlink -f /etc/localtime | grep -q "$TZ_NAME" && ok "Timezone: $TZ_NAME" || die "Timezone was not applied"
 }
 # etcnet: $1 iface, $2 BOOTPROTO, $3 адрес/маска, $4 шлюз, $5 DNS
 etcnet_eth() {
@@ -99,16 +99,17 @@ enable_forward() {
     sed -i -E 's/^\s*net\.ipv4\.ip_forward.*/net.ipv4.ip_forward = 1/' "$f"
   else echo "net.ipv4.ip_forward = 1" >> "$f"; fi
   sysctl -w net.ipv4.ip_forward=1 >/dev/null
-  [ "$(cat /proc/sys/net/ipv4/ip_forward)" = "1" ] && ok "IP forwarding включён" || die "ip_forward не включён"
+  [ "$(cat /proc/sys/net/ipv4/ip_forward)" = "1" ] && ok "IP forwarding enabled" || die "ip_forward is not enabled"
 }
 restart_network() {
-  systemctl restart network || die "Не удалось перезапустить network"
-  sleep 3; ok "Сеть перезапущена"
+  chattr -i /etc/resolv.conf 2>/dev/null || true
+  systemctl restart network || die "Failed to restart network"
+  sleep 3; ok "Network restarted"
 }
 wait_inet() {
   local i; for i in $(seq 1 40); do
-    ping -c1 -W1 77.88.8.8 >/dev/null 2>&1 && { ok "Интернет доступен"; return 0; }; sleep 1
-  done; die "Нет связи с 77.88.8.8 — проверьте адресацию/NAT"
+    ping -c1 -W1 77.88.8.8 >/dev/null 2>&1 && { ok "Internet is reachable"; return 0; }; sleep 1
+  done; die "No reply from 77.88.8.8 - check addressing/NAT"
 }
 SSHD_CFG=/etc/openssh/sshd_config
 sshd_set() {   # удаляет все варианты директивы и ставит её в начало файла (до блоков Match)
@@ -116,32 +117,32 @@ sshd_set() {   # удаляет все варианты директивы и с
   sed -i "1i $1 $2" "$SSHD_CFG"
 }
 sshd_apply() {
-  /usr/sbin/sshd -t || die "Ошибка в $SSHD_CFG (sshd -t)"
+  /usr/sbin/sshd -t || die "Error in $SSHD_CFG (sshd -t)"
   systemctl enable sshd >/dev/null 2>&1 || true
-  systemctl restart sshd || die "sshd не перезапустился"
-  ss -tln | grep -q ":$SSH_PORT " && ok "sshd слушает порт $SSH_PORT" || die "sshd не слушает $SSH_PORT"
+  systemctl restart sshd || die "sshd did not restart"
+  ss -tln | grep -q ":$SSH_PORT " && ok "sshd listens on port $SSH_PORT" || die "sshd does not listen on $SSH_PORT"
 }
 
 pkg_try() {                 # нефатальная установка: вернёт 1, если пакета нет
   apt_update
   local p
-  for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 || { warn "Пакет $p не найден в репозитории"; return 1; }; done
-  apt-get install -y "$@" || { warn "Не удалось установить: $*"; return 1; }
-  ok "Пакеты установлены: $*"
+  for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 || { warn "Package $p not found in repository"; return 1; }; done
+  apt-get install -y "$@" || { warn "Failed to install: $*"; return 1; }
+  ok "Packages installed: $*"
 }
 create_user() {             # $1 имя, $2 UID (может быть пустым), $3 пароль; группа wheel
   local u="$1" uid="$2" pw="$3"
   if id "$u" >/dev/null 2>&1; then
-    warn "Пользователь $u уже существует — обновляю пароль и группы"
-    if [ -n "$uid" ] && [ "$(id -u "$u")" != "$uid" ]; then warn "UID $u = $(id -u "$u"), ожидался $uid"; fi
+    warn "User $u already exists - updating password and groups"
+    if [ -n "$uid" ] && [ "$(id -u "$u")" != "$uid" ]; then warn "UID $u = $(id -u "$u"), expected $uid"; fi
   elif [ -n "$uid" ]; then
-    useradd -m -u "$uid" -G wheel -s /bin/bash "$u" || die "useradd $u не выполнен"
+    useradd -m -u "$uid" -G wheel -s /bin/bash "$u" || die "useradd $u failed"
   else
-    useradd -m -G wheel -s /bin/bash "$u" || die "useradd $u не выполнен"
+    useradd -m -G wheel -s /bin/bash "$u" || die "useradd $u failed"
   fi
-  echo "$u:$pw" | chpasswd || die "chpasswd для $u не выполнен"
+  echo "$u:$pw" | chpasswd || die "chpasswd for $u failed"
   usermod -aG wheel "$u"
-  id -nG "$u" | grep -qw wheel && ok "Пользователь $u (uid $(id -u "$u")) в группе wheel" || die "$u не в wheel"
+  id -nG "$u" | grep -qw wheel && ok "User $u (uid $(id -u "$u")) is in group wheel" || die "$u is not in wheel"
 }
 install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 содержимое
   pkg_install sudo
@@ -149,10 +150,10 @@ install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 сод�
   local f="/etc/sudoers.d/$1"
   printf '%s\n' "$2" > "$f.tmp"          # файлы с точкой sudo игнорирует — безопасная проверка
   chmod 0400 "$f.tmp"
-  visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Синтаксическая ошибка в правиле sudo $1"; }
+  visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Syntax error in sudo rule $1"; }
   mv -f "$f.tmp" "$f"; chown root:root "$f"; chmod 0400 "$f"
-  visudo -c >/dev/null || die "visudo -c: ошибка в конфигурации sudo"
-  ok "sudo: $f (права 0400)"
+  visudo -c >/dev/null || die "visudo -c: sudo config error"
+  ok "sudo: $f (mode 0400)"
 }
 chrony_client() {           # $1 — адрес NTP-сервера ISP
   pkg_install chrony
@@ -164,18 +165,19 @@ makestep 1.0 3
 rtcsync
 EOF
   systemctl enable chronyd >/dev/null 2>&1
-  systemctl restart chronyd || die "chronyd не запустился"
-  ok "chrony-клиент сервера $1"
+  systemctl restart chronyd || die "chronyd did not start"
+  ok "chrony client of server $1"
 }
 rsyslog_client() {          # $1 — сервер сбора логов; уровень warning и выше
   if pkg_try rsyslog-classic || pkg_try rsyslog; then
     mkdir -p /etc/rsyslog.d
     echo "*.warning @@$1:514" > /etc/rsyslog.d/90-remote.conf
     systemctl enable rsyslog >/dev/null 2>&1 || true
-    systemctl restart rsyslog && ok "rsyslog: *.warning -> $1:514/tcp" || warn "rsyslog не перезапустился"
-  else warn "rsyslog не установлен — пропуск"; fi
+    systemctl restart rsyslog && ok "rsyslog: *.warning -> $1:514/tcp" || warn "rsyslog did not restart"
+  else warn "rsyslog not installed - skipped"; fi
 }
 set_resolv() {              # $1 iface (etcnet), $2 nameserver
+  chattr -i /etc/resolv.conf 2>/dev/null || true   # снять защиту, если её ставил старый скрипт
   printf 'search au-team.irpo\nnameserver %s\n' "$2" > "/etc/net/ifaces/$1/resolv.conf"
   if command -v resolvconf >/dev/null 2>&1; then
     resolvconf -u >/dev/null 2>&1 || true
@@ -186,23 +188,23 @@ set_resolv() {              # $1 iface (etcnet), $2 nameserver
 enable_first() {            # запускает первую существующую службу из списка
   local s; for s in "$@"; do
     if systemctl list-unit-files "$s.service" 2>/dev/null | grep -q "^$s.service"; then
-      systemctl enable --now "$s" && { ENABLED_SVC="$s"; ok "Служба $s запущена"; return 0; }
+      systemctl enable --now "$s" && { ENABLED_SVC="$s"; ok "Service $s started"; return 0; }
     fi
-  done; die "Не найдена/не запустилась ни одна из служб: $*"
+  done; die "None of these services found/started: $*"
 }
 
 # ============================== МОДУЛЬ 1 =====================================
-step "Проверка интерфейсов"
+step "Checking interfaces"
 check_iface "$IF_WAN"; check_iface "$IF_TRUNK"
 
-step "Имя устройства"
+step "Hostname"
 set_hostname "$HOST_FQDN"
 
-step "Адресация WAN и trunk"
+step "Addressing WAN and trunk"
 etcnet_eth "$IF_WAN" static "$WAN_IP" "$WAN_GW" "77.88.8.8"
 etcnet_eth "$IF_TRUNK" static ""              # без адреса — только носитель VLAN
 
-step "VLAN-подынтерфейсы (Router-on-a-Stick)"
+step "VLAN subinterfaces (Router-on-a-Stick)"
 for pair in "$VLAN_SRV:$IP_SRV" "$VLAN_CLI:$IP_CLI" "$VLAN_MGMT:$IP_MGMT"; do
   vid="${pair%%:*}"; addr="${pair#*:}"; d="/etc/net/ifaces/$IF_TRUNK.$vid"
   mkdir -p "$d"
@@ -219,8 +221,8 @@ EOF
   ok "VLAN $vid -> $IF_TRUNK.$vid $addr"
 done
 
-step "GRE-туннель tun0"
-modprobe gre || die "Модуль gre не загружен"
+step "GRE tunnel tun0"
+modprobe gre || die "gre module not loaded"
 grep -qx gre /etc/modules 2>/dev/null || echo gre >> /etc/modules
 mkdir -p /etc/net/ifaces/tun0
 cat > /etc/net/ifaces/tun0/options <<EOF
@@ -242,23 +244,23 @@ ok "tun0: $TUN_LOCAL -> $TUN_REMOTE, $TUN_IP"
 enable_forward
 restart_network
 for i in "$IF_TRUNK.$VLAN_SRV" "$IF_TRUNK.$VLAN_CLI" "$IF_TRUNK.$VLAN_MGMT" tun0; do
-  ip -4 -br addr show "$i" | grep -q 'UP\|UNKNOWN' || die "Интерфейс $i не поднят"
+  ip -4 -br addr show "$i" | grep -q 'UP\|UNKNOWN' || die "Interface $i is not up"
 done
-ok "VLAN и tun0 подняты"
+ok "VLANs and tun0 are up"
 wait_inet
 
-step "Часовой пояс"
+step "Timezone"
 set_tz
 
-step "Пользователь $ADMIN_USER (sudo без пароля)"
+step "User $ADMIN_USER (passwordless sudo)"
 create_user "$ADMIN_USER" "" "$ADMIN_PASS"
 install_sudoers "$ADMIN_USER" "$ADMIN_USER ALL=(ALL:ALL) NOPASSWD: ALL"
 
-step "OSPF (FRR) — только через tun0, MD5"
+step "OSPF (FRR) - only via tun0, MD5"
 pkg_install frr
 backup /etc/frr/daemons
 sed -i -E 's/^ospfd=.*/ospfd=yes/' /etc/frr/daemons
-grep -q '^ospfd=yes' /etc/frr/daemons || die "ospfd не включён в /etc/frr/daemons"
+grep -q '^ospfd=yes' /etc/frr/daemons || die "ospfd is not enabled in /etc/frr/daemons"
 backup /etc/frr/frr.conf
 cat > /etc/frr/frr.conf <<EOF
 frr defaults traditional
@@ -287,22 +289,22 @@ EOF
 chown frr:frr /etc/frr/frr.conf 2>/dev/null || true
 chmod 640 /etc/frr/frr.conf
 systemctl enable frr >/dev/null 2>&1
-systemctl restart frr || die "frr не запустился"
+systemctl restart frr || die "frr did not start"
 sleep 3
-vtysh -c "show running-config" | grep -q "router ospf" || die "OSPF не загрузился в FRR"
-vtysh -c "show ip ospf interface tun0" | grep -q "Message-digest" && ok "OSPF на tun0 с MD5" || warn "Проверьте аутентификацию: vtysh -c 'show ip ospf interface tun0'"
+vtysh -c "show running-config" | grep -q "router ospf" || die "OSPF not loaded into FRR"
+vtysh -c "show ip ospf interface tun0" | grep -q "Message-digest" && ok "OSPF on tun0 with MD5" || warn "Check authentication: vtysh -c 'show ip ospf interface tun0'"
 
-step "NAT в сторону ISP и проброс портов"
+step "NAT towards ISP and port forwarding"
 pkg_install iptables
 iptables -t nat -F
 iptables -t nat -A POSTROUTING -o "$IF_WAN" -j MASQUERADE
 iptables -t nat -A PREROUTING -i "$IF_WAN" -p tcp --dport 8080 -j DNAT --to-destination "$HQ_SRV:80"
 iptables -t nat -A PREROUTING -i "$IF_WAN" -p tcp --dport "$SSH_PORT" -j DNAT --to-destination "$HQ_SRV:$SSH_PORT"
-iptables-save > /etc/sysconfig/iptables || die "Не удалось сохранить правила"
-systemctl enable iptables >/dev/null 2>&1 || die "Не удалось включить iptables.service"
-iptables -t nat -S | grep -q "DNAT.*$HQ_SRV:$SSH_PORT" && ok "NAT/DNAT сохранены в /etc/sysconfig/iptables" || die "DNAT не применился"
+iptables-save > /etc/sysconfig/iptables || die "Failed to save rules"
+systemctl enable iptables >/dev/null 2>&1 || die "Failed to enable iptables.service"
+iptables -t nat -S | grep -q "DNAT.*$HQ_SRV:$SSH_PORT" && ok "NAT/DNAT saved to /etc/sysconfig/iptables" || die "DNAT was not applied"
 
-step "DHCP для HQ-CLI (dnsmasq, только VLAN $VLAN_CLI)"
+step "DHCP for HQ-CLI (dnsmasq, VLAN $VLAN_CLI only)"
 pkg_install dnsmasq
 backup /etc/dnsmasq.conf
 cat > /etc/dnsmasq.conf <<EOF
@@ -320,18 +322,18 @@ dhcp-option=option:domain-name,au-team.irpo
 dhcp-option=option:domain-search,au-team.irpo
 log-dhcp
 EOF
-dnsmasq --test || die "Ошибка в /etc/dnsmasq.conf"
+dnsmasq --test || die "Error in /etc/dnsmasq.conf"
 systemctl enable dnsmasq >/dev/null 2>&1
-systemctl restart dnsmasq || die "dnsmasq не запустился"
-ss -uln | grep -q ':67 ' && ok "DHCP-сервер слушает 67/udp" || die "DHCP не слушает 67/udp"
+systemctl restart dnsmasq || die "dnsmasq did not start"
+ss -uln | grep -q ':67 ' && ok "DHCP server listens on 67/udp" || die "DHCP does not listen on 67/udp"
 
-step "SSH на порт $SSH_PORT"
+step "SSH on port $SSH_PORT"
 sshd_set Port "$SSH_PORT"
 sshd_set PermitRootLogin no
 sshd_apply
 
 # ============================== МОДУЛЬ 2/3 ===================================
-step "NTP-клиент и Python для Ansible"
+step "NTP client and Python for Ansible"
 chrony_client "$NTP_SRV"
 pkg_install python3
 
@@ -339,7 +341,7 @@ step "rsyslog -> HQ-SRV"
 rsyslog_client "$HQ_SRV"
 
 # ============================== МОДУЛЬ 3 =====================================
-step "Шифрование туннеля: IPsec (strongSwan, IKEv2) поверх GRE"
+step "Tunnel encryption: IPsec (strongSwan, IKEv2) over GRE"
 # Выбор: strongSwan есть в репозитории ALT p10, работает в ядре (XFRM),
 # в транспортном режиме шифрует только GRE между внешними адресами роутеров.
 # Туннель tun0 и OSPF не меняются; для OSPF добавлен mtu-ignore, MTU tun0 = 1400.
@@ -369,24 +371,24 @@ conn gre-protect
 EOF
 printf '%s %s : PSK "%s"\n' "$TUN_LOCAL" "$TUN_REMOTE" "$IPSEC_PSK" > "$IPSEC_DIR/ipsec.secrets"
 chmod 600 "$IPSEC_DIR/ipsec.secrets"
-ok "Конфигурация: $IPSEC_DIR/ipsec.conf, ключ в ipsec.secrets"
+ok "Config: $IPSEC_DIR/ipsec.conf, key in ipsec.secrets"
 ip link set tun0 mtu 1400
 echo "mtu 1400" > /etc/net/ifaces/tun0/iplink
 enable_first ipsec strongswan-starter strongswan
-systemctl restart "$ENABLED_SVC" || die "Служба $ENABLED_SVC не перезапустилась"
+systemctl restart "$ENABLED_SVC" || die "Service $ENABLED_SVC did not restart"
 IPSEC_UP=0
 for i in $(seq 1 20); do
   if ipsec statusall 2>/dev/null | grep -q ESTABLISHED || ip xfrm state 2>/dev/null | grep -q 'proto esp'; then IPSEC_UP=1; break; fi
   sleep 2
 done
-if [ "$IPSEC_UP" = 1 ]; then ok "IPsec SA установлена (ip xfrm state)"
-else warn "IPsec пока не поднят — второй роутер ещё не настроен? Проверка: ipsec statusall"; fi
+if [ "$IPSEC_UP" = 1 ]; then ok "IPsec SA established (ip xfrm state)"
+else warn "IPsec is not up yet - other router not configured? Check: ipsec statusall"; fi
 systemctl restart frr
 sleep 8
-vtysh -c "show ip ospf neighbor" | grep -q Full && ok "OSPF восстановил соседство через зашифрованный туннель" \
-  || warn "Соседа OSPF пока нет — проверьте после настройки второго роутера"
+vtysh -c "show ip ospf neighbor" | grep -q Full && ok "OSPF neighbor is Full over the encrypted tunnel" \
+  || warn "No OSPF neighbor yet - check after the other router is configured"
 
-step "Межсетевой экран на интерфейсе $IF_WAN (в сторону ISP)"
+step "Firewall on $IF_WAN (towards ISP)"
 # Из офиса наружу разрешено всё (http, https, dns, ntp, icmp работают).
 # Из Интернета внутрь — только ответы, ICMP, опубликованные DNAT-порты,
 # а на сам роутер — GRE/IPsec от второго роутера.
@@ -405,14 +407,14 @@ iptables -A WAN_FWD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A WAN_FWD -m conntrack --ctstate DNAT -j ACCEPT      # 8080 и 2027 (статический проброс)
 iptables -A WAN_FWD -p icmp -j ACCEPT
 iptables -A WAN_FWD -j DROP
-iptables-save > /etc/sysconfig/iptables || die "Не удалось сохранить правила"
-iptables -S WAN_IN | grep -q DROP && iptables -S WAN_FWD | grep -q DROP && ok "Межсетевой экран применён и сохранён" || die "Правила МЭ не применились"
-ping -c1 -W2 77.88.8.8 >/dev/null 2>&1 && ok "Выход в Интернет после МЭ работает" || warn "Нет ответа от 77.88.8.8 после применения МЭ"
+iptables-save > /etc/sysconfig/iptables || die "Failed to save rules"
+iptables -S WAN_IN | grep -q DROP && iptables -S WAN_FWD | grep -q DROP && ok "Firewall applied and saved" || die "Firewall rules were not applied"
+ping -c1 -W2 77.88.8.8 >/dev/null 2>&1 && ok "Internet works after firewall" || warn "No reply from 77.88.8.8 after firewall"
 
 # ============================== ИТОГ =========================================
-step "Итоговая проверка"
+step "Final check"
 ip -br -4 addr
 ip route
 vtysh -c "show ip ospf neighbor" || true
-echo -e "${C_G}HQ-RTR настроен. Лог: $LOG_FILE${C_N}"
-echo "Сосед OSPF появится после запуска br-rtr.sh (проверка: vtysh -c 'show ip ospf neighbor')."
+echo -e "${C_G}HQ-RTR is configured. Log: $LOG_FILE${C_N}"
+echo "OSPF neighbor appears after br-rtr.sh (check: vtysh -c 'show ip ospf neighbor')."
