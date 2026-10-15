@@ -120,7 +120,20 @@ sshd_apply() {
   /usr/sbin/sshd -t || die "Error in $SSHD_CFG (sshd -t)"
   systemctl enable sshd >/dev/null 2>&1 || true
   systemctl restart sshd || die "sshd did not restart"
-  ss -tln | grep -q ":$SSH_PORT " && ok "sshd listens on port $SSH_PORT" || die "sshd does not listen on $SSH_PORT"
+  local i
+  for i in $(seq 1 10); do ss -tln | grep -q ":$SSH_PORT " && break; sleep 1; done
+  if ! ss -tln | grep -q ":$SSH_PORT "; then
+    warn "sshd is not on $SSH_PORT yet - restarting once more"
+    systemctl daemon-reload; systemctl restart sshd || true
+    for i in $(seq 1 10); do ss -tln | grep -q ":$SSH_PORT " && break; sleep 1; done
+  fi
+  if ss -tln | grep -q ":$SSH_PORT "; then ok "sshd listens on port $SSH_PORT"
+  else
+    echo "---- Port lines in config ----"; grep -rnE '^[[:space:]]*(Port|ListenAddress)' "$SSHD_CFG" /etc/openssh/sshd_config.d 2>/dev/null || true
+    echo "---- listening sockets ----"; ss -tlnp | grep -E 'sshd|:22 ' || true
+    journalctl -u sshd -n 10 --no-pager 2>/dev/null || true
+    warn "sshd does not listen on $SSH_PORT - see output above (script continues)"
+  fi
 }
 
 pkg_try() {                 # нефатальная установка: вернёт 1, если пакета нет
@@ -147,7 +160,9 @@ create_user() {             # $1 имя, $2 UID (может быть пусты�
 install_sudoers() {         # $1 имя файла в /etc/sudoers.d, $2 содержимое
   pkg_install sudo
   grep -Eq '^[@#]includedir[[:space:]]+/etc/sudoers\.d' /etc/sudoers || echo '@includedir /etc/sudoers.d' >> /etc/sudoers
-  local f="/etc/sudoers.d/$1"
+  local f="/etc/sudoers.d/$1" g
+  # sudo на ALT требует права 0400 на ВСЕХ файлах sudoers.d, иначе visudo -c падает
+  for g in /etc/sudoers.d/*; do [ -f "$g" ] && { chown root:root "$g"; chmod 0400 "$g"; }; done
   printf '%s\n' "$2" > "$f.tmp"          # файлы с точкой sudo игнорирует — безопасная проверка
   chmod 0400 "$f.tmp"
   visudo -cf "$f.tmp" >/dev/null || { rm -f "$f.tmp"; die "Syntax error in sudo rule $1"; }
