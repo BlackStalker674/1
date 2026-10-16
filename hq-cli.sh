@@ -396,19 +396,30 @@ if ls "$CA_SRC"/ca-*.crt >/dev/null 2>&1; then
   cp -f "$CA_SRC"/ca-*.crt /etc/pki/ca-trust/source/anchors/
   update-ca-trust extract 2>/dev/null || update-ca-trust || warn "update-ca-trust failed"
   ok "Root certs added to system store"
+  # NSS (Яндекс Браузер, Firefox) не понимает ключи ГОСТ: туда идут только RSA-сертификаты УЦ
+  RSA_CAS=""
+  for c in "$CA_SRC"/ca-*.crt; do
+    if openssl x509 -in "$c" -noout -text 2>/dev/null | grep -q 'Public Key Algorithm: rsaEncryption'; then
+      RSA_CAS="$RSA_CAS /etc/pki/ca-trust/source/anchors/$(basename "$c")"
+    else
+      echo "Skipping $(basename "$c") for browsers (GOST key - NSS does not support it)"
+    fi
+  done
   # 2) NSS (Yandex Browser/Chromium): /etc/skel и существующие профили
   if pkg_try nss-utils; then
     add_nss() {
       local db="$1" owner="$2" c
       mkdir -p "$db"
       [ -f "$db/cert9.db" ] || certutil -N -d "sql:$db" --empty-password
-      for c in "$CA_SRC"/ca-*.crt; do
+      for c in $RSA_CAS; do
         certutil -D -d "sql:$db" -n "AU-TEAM $(basename "$c" .crt)" >/dev/null 2>&1 || true
-        certutil -A -d "sql:$db" -n "AU-TEAM $(basename "$c" .crt)" -t "C,," -i "$c"
+        certutil -A -d "sql:$db" -n "AU-TEAM $(basename "$c" .crt)" -t "C,," -i "$c" \
+          || warn "certutil could not add $(basename "$c") to $db"
       done
       [ -n "$owner" ] && chown -R "$owner": "$(dirname "$db")"
       return 0
     }
+    [ -n "$RSA_CAS" ] || warn "No RSA CA certificate found in $CA_SRC - browsers will not trust the sites"
     add_nss /etc/skel/.pki/nssdb ""                    # для новых (в т.ч. доменных) пользователей
     add_nss /root/.pki/nssdb ""
     for h in /home/*; do
@@ -420,7 +431,7 @@ if ls "$CA_SRC"/ca-*.crt >/dev/null 2>&1; then
   mkdir -p /etc/firefox/policies
   {
     echo '{"policies": {"Certificates": {"ImportEnterpriseRoots": true, "Install": ['
-    first=1; for c in /etc/pki/ca-trust/source/anchors/ca-*.crt; do
+    first=1; for c in $RSA_CAS; do
       [ $first = 1 ] || echo ','; first=0; printf '"%s"' "$c"
     done
     echo ']}}}'
