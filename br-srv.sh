@@ -371,7 +371,11 @@ if (cd /etc/ansible && ansible all -m ping -o); then ok "All hosts reply pong"
 else warn "Not all hosts reply - after other VMs are ready: cd /etc/ansible && ansible all -m ping"; fi
 
 step "Docker: testapp + db stack"
-systemctl enable --now docker || die "docker did not start"
+# Опубликованные порты Docker доступны снаружи только при ip_forward=1. Перезапуск сети
+# в ALT применяет /etc/net/sysctl.conf (по умолчанию 0) и «ломает» уже запущенный Docker.
+enable_forward
+systemctl enable docker >/dev/null 2>&1 || true
+systemctl restart docker || die "docker did not start"
 if mount_iso; then
   DOCKER_SRC="$(find "$ISO_MNT" -maxdepth 2 -type d -iname docker | head -1)"
   [ -n "$DOCKER_SRC" ] || die "No docker directory in the ISO"
@@ -432,6 +436,7 @@ EOF
     curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ 2>/dev/null | grep -qE '^(200|30[0-9])$' && break; sleep 2
   done
   docker ps --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'
+  [ "$(cat /proc/sys/net/ipv4/ip_forward)" = 1 ] || warn "ip_forward is 0 - testapp will not be reachable from other hosts"
   curl -s -o /dev/null http://127.0.0.1:8080/ && ok "testapp is reachable on :8080" || warn "testapp does not reply - docker logs testapp (check APP_INNER_PORT)"
 else
   warn "ISO not attached - docker stack skipped"
