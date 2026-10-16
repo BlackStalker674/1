@@ -527,36 +527,49 @@ fi
 step "Certificate authority: GOST R 34.10-2012 (+ RSA chain for browsers)"
 pkg_install openssl
 if pkg_try openssl-gost-engine; then control openssl-gost enabled >/dev/null 2>&1 || true; fi
-GOST_OK=0
-openssl list -public-key-algorithms 2>/dev/null | grep -qi 'gost2012_256' && GOST_OK=1
-[ "$GOST_OK" = 1 ] && ok "GOST algorithms available in OpenSSL (engine gost)" \
+# ГОСТ проверяем пробной генерацией ключа: сначала через конфиг, потом явным -engine gost
+GOST_OK=0; ENG=""
+TMPK="$(mktemp)"
+if openssl genpkey -algorithm gost2012_256 -pkeyopt paramset:A -out "$TMPK" >/dev/null 2>&1; then GOST_OK=1
+elif openssl genpkey -engine gost -algorithm gost2012_256 -pkeyopt paramset:A -out "$TMPK" >/dev/null 2>&1; then GOST_OK=1; ENG="-engine gost"
+fi
+rm -f "$TMPK"
+[ "$GOST_OK" = 1 ] && ok "GOST R 34.10-2012 available in OpenSSL ${ENG:-(via openssl.cnf)}" \
                    || warn "OpenSSL GOST engine unavailable - RSA chain only"
 mkdir -p "$CA_DIR"; chmod 700 "$CA_DIR"
-# $1 = gost|rsa, $2 = путь к ключу
-gen_key() {
-  if [ "$1" = gost ]; then openssl genpkey -algorithm gost2012_256 -pkeyopt paramset:A -out "$2"
+eng_of() { if [ "$1" = gost ]; then echo "$ENG"; fi; }
+md_of()  { if [ "$1" = gost ]; then echo "-md_gost12_256"; else echo "-sha256"; fi; }
+gen_key() {                 # $1 gost|rsa, $2 путь к ключу
+  if [ "$1" = gost ]; then openssl genpkey $(eng_of gost) -algorithm gost2012_256 -pkeyopt paramset:A -out "$2"
   else openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$2"; fi
   chmod 600 "$2"
 }
-md_of() { [ "$1" = gost ] && echo "-md_gost12_256" || echo "-sha256"; }
+# Расширения задаём только своим файлом (без -addext): в OpenSSL 1.1.1 -addext
+# дублирует расширения из openssl.cnf, и такой корневой сертификат считается испорченным.
 make_ca() {                 # корневой сертификат УЦ
   local a="$1" k="$CA_DIR/ca-$1.key" c="$CA_DIR/ca-$1.crt"
-  [ -s "$c" ] && { ok "CA $a already exists"; return 0; }
+  if [ -s "$c" ] && openssl verify $(eng_of "$a") -CAfile "$c" "$c" >/dev/null 2>&1; then ok "CA $a already exists and is valid"; return 0; fi
+  [ -s "$c" ] && warn "CA $a is broken (made by an older version) - recreating"
+  printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\n' > "$CA_DIR/ca.ext"
   gen_key "$a" "$k" || die "Failed to create CA key $a"
-  openssl req -x509 -new $(md_of "$a") -key "$k" -days "$CA_DAYS" \
-    -subj "/C=RU/O=AU-TEAM/CN=AU-TEAM Root CA ($a)" \
-    -addext "basicConstraints=critical,CA:TRUE" \
-    -addext "keyUsage=critical,keyCertSign,cRLSign" -out "$c" || die "Failed to create CA cert $a"
+  openssl req -new $(eng_of "$a") $(md_of "$a") -key "$k" -subj "/C=RU/O=AU-TEAM/CN=AU-TEAM Root CA ($a)" -out "$CA_DIR/ca-$a.csr" \
+    || die "Failed to create CA request $a"
+  openssl x509 -req $(eng_of "$a") -in "$CA_DIR/ca-$a.csr" -signkey "$k" $(md_of "$a") -days "$CA_DAYS" \
+    -extfile "$CA_DIR/ca.ext" -out "$c" || die "Failed to create CA cert $a"
+  openssl verify $(eng_of "$a") -CAfile "$c" "$c" >/dev/null || die "CA $a does not verify itself"
   ok "CA $a: $c"
 }
 issue() {                   # $1 алгоритм, $2 короткое имя (web|docker) — срок CERT_DAYS
   local a="$1" n="$2" fq="$2.au-team.irpo" k="$CA_DIR/$2-$1.key" csr="$CA_DIR/$2-$1.csr" c="$CA_DIR/$2-$1.crt"
   gen_key "$a" "$k" || die "Failed to create key $fq ($a)"
-  openssl req -new $(md_of "$a") -key "$k" -subj "/C=RU/O=AU-TEAM/CN=$fq" -out "$csr" || die "CSR $fq"
-  printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\n' "$fq" > "$CA_DIR/$n.ext"
-  openssl x509 -req -in "$csr" -CA "$CA_DIR/ca-$a.crt" -CAkey "$CA_DIR/ca-$a.key" -CAcreateserial \
+  openssl req -new $(eng_of "$a") $(md_of "$a") -key "$k" -subj "/C=RU/O=AU-TEAM/CN=$fq" -out "$csr" || die "CSR $fq"
+  printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n' "$fq" > "$CA_DIR/$n.ext"
+  openssl x509 -req $(eng_of "$a") -in "$csr" -CA "$CA_DIR/ca-$a.crt" -CAkey "$CA_DIR/ca-$a.key" -CAcreateserial \
     $(md_of "$a") -days "$CERT_DAYS" -extfile "$CA_DIR/$n.ext" -out "$c" || die "Failed to sign cert $fq ($a)"
-  openssl verify -CAfile "$CA_DIR/ca-$a.crt" "$c" >/dev/null || die "Chain $fq ($a) does not verify"
+  if ! openssl verify $(eng_of "$a") -CAfile "$CA_DIR/ca-$a.crt" "$c" >/dev/null; then
+    openssl x509 -in "$CA_DIR/ca-$a.crt" -noout -text | grep -A1 -E 'Basic Constraints|Key Usage' || true
+    die "Chain $fq ($a) does not verify"
+  fi
   cat "$c" "$CA_DIR/ca-$a.crt" > "$CA_DIR/$n-$a.fullchain.crt"
   ok "Issued $fq ($a) for $CERT_DAYS days"
 }

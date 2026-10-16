@@ -321,17 +321,33 @@ DOMAIN_OK=1
 if command -v host >/dev/null 2>&1; then
   host -t SRV "_ldap._tcp.$AD_DOMAIN" >/dev/null && ok "Domain SRV records resolve" || warn "No SRV _ldap._tcp - check forwarding on HQ-SRV"
 fi
-if [ -f /etc/sssd/sssd.conf ] && grep -qi "$AD_DOMAIN" /etc/sssd/sssd.conf; then
-  warn "Already joined - skipped"
+# Признак ввода в домен — ключ машины в /etc/krb5.keytab (одного sssd.conf мало)
+joined() { [ -s /etc/krb5.keytab ] && klist -k /etc/krb5.keytab 2>/dev/null | grep -qi "${HOST_SHORT}"; }
+if joined; then
+  ok "Already joined (machine key in /etc/krb5.keytab)"
 else
+  chronyc -a makestep >/dev/null 2>&1 || true          # Kerberos не терпит расхождения времени
+  echo "Running: system-auth write ad $AD_DOMAIN $HOST_SHORT $AD_WORKGROUP $AD_ADMIN ****"
   system-auth write ad "$AD_DOMAIN" "$HOST_SHORT" "$AD_WORKGROUP" "$AD_ADMIN" "$AD_PASS" \
-    || die "system-auth write ad failed (DC reachable? time in sync?)"
+    || warn "system-auth write ad returned an error"
 fi
-systemctl enable sssd >/dev/null 2>&1 || true
-systemctl restart sssd || die "sssd did not start"
-sleep 3
-if id hquser1 >/dev/null 2>&1 || id "hquser1@$AD_DOMAIN" >/dev/null 2>&1; then ok "Domain users are visible (id hquser1)"
-else warn "id hquser1 does not resolve - check 'systemctl status sssd'"; fi
+if joined; then
+  ok "Machine account is in the domain"
+  systemctl enable sssd >/dev/null 2>&1 || true
+  if systemctl restart sssd; then
+    sleep 3
+    if id hquser1 >/dev/null 2>&1 || id "hquser1@$AD_DOMAIN" >/dev/null 2>&1; then ok "Domain users are visible (id hquser1)"
+    else warn "id hquser1 does not resolve yet - check 'systemctl status sssd'"; fi
+  else
+    journalctl -u sssd -n 15 --no-pager 2>/dev/null || true
+    warn "sssd did not start - see output above"
+  fi
+else
+  echo "---- diagnostics ----"
+  date; chronyc tracking 2>/dev/null | grep -E 'Reference|System time' || true
+  host -t SRV "_kerberos._tcp.$AD_DOMAIN" 2>/dev/null || true
+  warn "Domain join FAILED: check time on HQ-CLI and BR-SRV, DNS (above) and the Administrator password"
+fi
 
 step "sudo for group hq: only cat, grep, id"
 control sudo public 2>/dev/null || true          # sudo доступен не только wheel (ALT control)

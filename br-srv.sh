@@ -451,28 +451,40 @@ if [ -n "$CSV" ]; then
   C_OU=$(col '^ou$|^ou[ _]|unit|отдел|подраздел'); C_PHONE=$(col 'phone|тел')
   C_TITLE=$(col 'title|role|должн')
   echo "CSV header: ${HDR[*]}"
-  CNT=0; FAIL=0
-  while IFS="$DELIM" read -r -a R; do
+  echo "Data rows in CSV: $(tail -n +2 /tmp/users.csv | grep -c .)"
+  CNT=0; FAIL=0; SKIP=0
+  # Чтение через дескриптор 3, а samba-tool получает /dev/null: иначе он съедает строки файла
+  while IFS="$DELIM" read -r -a R <&3; do
     [ ${#R[@]} -gt 1 ] || continue
-    fn="${R[$C_FIRST]:-}"; ln="${R[$C_LAST]:-}"; [ "$C_FIRST" -ge 0 ] || fn=""; [ "$C_LAST" -ge 0 ] || ln=""
-    if [ "$C_LOGIN" -ge 0 ] && [ -n "${R[$C_LOGIN]}" ]; then login="${R[$C_LOGIN]}"
+    fn=""; ln=""
+    [ "$C_FIRST" -ge 0 ] && fn="$(echo "${R[$C_FIRST]:-}" | xargs)"
+    [ "$C_LAST" -ge 0 ] && ln="$(echo "${R[$C_LAST]:-}" | xargs)"
+    if [ "$C_LOGIN" -ge 0 ] && [ -n "${R[$C_LOGIN]:-}" ]; then login="${R[$C_LOGIN]}"
     else login="$(echo "$fn.$ln" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"; fi
+    login="${login:0:20}"                               # sAMAccountName не длиннее 20 символов
     [ -n "$login" ] && [ "$login" != "." ] || continue
-    pw="$IMPORT_DEFAULT_PASS"; [ "$C_PASS" -ge 0 ] && [ -n "${R[$C_PASS]}" ] && pw="${R[$C_PASS]}"
+    pw="$IMPORT_DEFAULT_PASS"
+    if [ "$C_PASS" -ge 0 ] && [ -n "${R[$C_PASS]:-}" ]; then pw="$(echo "${R[$C_PASS]}" | xargs)"; fi
     args=()
-    [ -n "$fn" ] && args+=(--given-name="$fn"); [ -n "$ln" ] && args+=(--surname="$ln")
-    [ "$C_PHONE" -ge 0 ] && [ -n "${R[$C_PHONE]}" ] && args+=(--telephone-number="${R[$C_PHONE]}")
-    [ "$C_TITLE" -ge 0 ] && [ -n "${R[$C_TITLE]}" ] && args+=(--job-title="${R[$C_TITLE]}")
-    if [ "$C_OU" -ge 0 ] && [ -n "${R[$C_OU]}" ]; then
-      ou="${R[$C_OU]}"
-      samba-tool ou create "OU=$ou,DC=au-team,DC=irpo" >/dev/null 2>&1 || true
+    if [ -n "$fn" ]; then args+=(--given-name="$fn"); fi
+    if [ -n "$ln" ]; then args+=(--surname="$ln"); fi
+    if [ "$C_PHONE" -ge 0 ] && [ -n "${R[$C_PHONE]:-}" ]; then args+=(--telephone-number="${R[$C_PHONE]}"); fi
+    if [ "$C_TITLE" -ge 0 ] && [ -n "${R[$C_TITLE]:-}" ]; then args+=(--job-title="${R[$C_TITLE]}"); fi
+    if [ "$C_OU" -ge 0 ] && [ -n "${R[$C_OU]:-}" ]; then
+      ou="$(echo "${R[$C_OU]}" | xargs)"
+      samba-tool ou create "OU=$ou,DC=au-team,DC=irpo" </dev/null >/dev/null 2>&1 || true
       args+=(--userou="OU=$ou")
     fi
-    if samba-tool user show "$login" >/dev/null 2>&1; then continue; fi
-    if samba-tool user create "$login" "$pw" "${args[@]}" >/dev/null 2>&1; then
-      samba-tool user setexpiry "$login" --noexpiry >/dev/null 2>&1 || true; CNT=$((CNT+1))
-    else FAIL=$((FAIL+1)); warn "Not created: $login"; fi
-  done < <(tail -n +2 /tmp/users.csv)
+    if samba-tool user show "$login" </dev/null >/dev/null 2>&1; then SKIP=$((SKIP+1)); continue; fi
+    if err="$(samba-tool user create "$login" "$pw" "${args[@]}" </dev/null 2>&1)" \
+       || err="$(samba-tool user create "$login" "$IMPORT_DEFAULT_PASS" "${args[@]}" </dev/null 2>&1)"; then
+      samba-tool user setexpiry "$login" --noexpiry </dev/null >/dev/null 2>&1 || true; CNT=$((CNT+1))
+    else
+      FAIL=$((FAIL+1)); warn "Not created: $login"
+      [ "$FAIL" -le 3 ] && echo "$err" | tail -2
+    fi
+  done 3< <(tail -n +2 /tmp/users.csv)
+  [ "$SKIP" -gt 0 ] && echo "Already existed: $SKIP"
   ok "Users imported: $CNT, errors: $FAIL"
 else
   warn "users.csv not found in ISO - import skipped"
