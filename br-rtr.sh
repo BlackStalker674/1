@@ -522,5 +522,7 @@ hostname_final
 ip -br -4 addr
 sleep 10
 vtysh -c "show ip ospf neighbor" || true
+echo "Waiting for HQ routes via OSPF (up to 30 s)..."
+for i in $(seq 1 15); do ip route | grep -q '192.168.100.0/27' && break; sleep 2; done
 ip route | grep -q '192.168.100.0/27' && ok "Route to HQ learned via OSPF" || warn "No HQ routes yet - check hq-rtr and 'show ip ospf neighbor'"
 echo -e "${C_G}BR-RTR is configured. Log: $LOG_FILE${C_N}"
