@@ -8,8 +8,8 @@
 #       docker compose из Additional.iso: testapp + db (порт 8080)
 #   М3: импорт пользователей (import.sh + users.csv из Additional.iso),
 #       плейбук инвентаризации (PC-INFO)
-#  Схема филиала: BR-RTR — BR-FW — BR-SRV (шлюз 192.168.0.1 на BR-FW).
-#  Запуск: после br-fw.sh и hq-srv.sh. Нужен подключённый образ Additional.iso.
+#  Схема филиала: BR-RTR — BR-SRV (шлюз 192.168.0.1 на BR-RTR).
+#  Запуск: после hq-srv.sh. Нужен подключённый образ Additional.iso.
 # =============================================================================
 
 # ---------------------------- ПАРАМЕТРЫ --------------------------------------
@@ -17,13 +17,13 @@ HOST_FQDN="br-srv.tkhis.pro"
 DNS_DOMAIN="tkhis.pro"
 TZ_NAME="Asia/Krasnoyarsk"
 IF_LAN="enp7s1"
-IP_ADDR="192.168.0.2/29"; GW="192.168.0.1"   # сеть BR-SRV: не более 8 адресов, шлюз — BR-FW
+IP_ADDR="192.168.0.2/29"; GW="192.168.0.1"   # сеть BR-SRV: не более 8 адресов, шлюз — BR-RTR
 SSH_PORT="2027"
 SSH_USER="userssh"; SSH_UID="2027"; PASS="P@ssw0rd"
 NTP_SRV="172.16.2.1"
 HQ_SRV="192.168.100.2"
 HQ_CLI="192.168.200.2"
-HQ_RTR="192.168.100.1"; BR_RTR="192.168.1.1"; RTR_USER="admin"
+HQ_RTR="192.168.100.1"; BR_RTR="192.168.0.1"; RTR_USER="admin"
 REALM="AU-TEAM.IRPO"; DOMAIN="AU-TEAM"; ADMIN_PASS="P@ssw0rd"
 AD_DOMAIN="au-team.irpo"
 DNS_FORWARDER="$HQ_SRV"

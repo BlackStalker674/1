@@ -1,17 +1,16 @@
 # Демоэкзамен КОД 09.02.06-1-2026 — вариант tkhis.pro
 
-Скрипты для ALT Linux p10. ВМ HQ-SW нет: VLAN 100/200/999 настраиваются на HQ-RTR методом Router-on-a-Stick.
+Скрипты для ALT Linux p10. ВМ HQ-SW и BR-FW нет: VLAN 100/200/999 настраиваются на HQ-RTR методом Router-on-a-Stick, BR-SRV подключён прямо к BR-RTR.
 
 ## Порядок запуска
 
 1. `isp.sh`
 2. `hq-rtr.sh`
 3. `br-rtr.sh`
-4. `br-fw.sh`
-5. `hq-srv.sh` — нужны Additional.iso и три диска по 1 ГБ
-6. на ISP: `isp.sh tls` — перевод прокси на HTTPS
-7. `br-srv.sh` — нужен Additional.iso
-8. `hq-cli.sh` — последним
+4. `hq-srv.sh` — нужны Additional.iso и три диска по 1 ГБ
+5. на ISP: `isp.sh tls` — перевод прокси на HTTPS
+6. `br-srv.sh` — нужен Additional.iso
+7. `hq-cli.sh` — последним
 
 Скачивать файлы всегда так, иначе выполнится старый файл:
 
@@ -26,20 +25,19 @@ bash имя.sh
 | Устройство | IP-адрес | Шлюз по умолчанию |
 |---|---|---|
 | HQ-RTR | 172.16.1.2/28 (к ISP); 192.168.100.1/28 (VLAN 100); 192.168.200.1/29 (VLAN 200); 192.168.99.1/29 (VLAN 999); 10.10.10.1/30 (tun0) | 172.16.1.1 |
-| BR-RTR | 172.16.2.2/28 (к ISP); 192.168.1.1/30 (к BR-FW); 10.10.10.2/30 (tun0) | 172.16.2.1 |
+| BR-RTR | 172.16.2.2/28 (к ISP); 192.168.0.1/29 (к BR-SRV); 10.10.10.2/30 (tun0) | 172.16.2.1 |
 | HQ-SRV | 192.168.100.2/28 | 192.168.100.1 |
 | HQ-CLI | 192.168.200.2/29 (DHCP) | 192.168.200.1 |
 | BR-SRV | 192.168.0.2/29 | 192.168.0.1 |
-| BR-FW | 192.168.1.2/30 (к BR-RTR); 192.168.0.1/29 (к BR-SRV) | 192.168.1.1 |
 
 ISP: внешний интерфейс получает адрес по DHCP; 172.16.1.1/28 к HQ-RTR; 172.16.2.1/28 к BR-RTR.
 
 ## Основные параметры
 
 - **Домены:** имена устройств и DNS — `tkhis.pro`, домен Samba DC — `au-team.irpo`. HQ-SRV пересылает зону `au-team.irpo` на BR-SRV.
-- **Пользователи:** `admin` / `P@ssw0rd` на маршрутизаторах (HQ-RTR, BR-RTR, BR-FW); `userssh` / `P@ssw0rd`, UID 2027, на HQ-SRV и BR-SRV. У всех sudo без пароля.
+- **Пользователи:** `admin` / `P@ssw0rd` на маршрутизаторах HQ-RTR и BR-RTR; `userssh` / `P@ssw0rd`, UID 2027, на HQ-SRV и BR-SRV. У всех sudo без пароля.
 - **SSH:** порт 2027 (баннер «Authorized access only», вход только `userssh`, не более 2 попыток).
-- **OSPF:** область 0, MD5-ключ `P@ssw0rd`. На HQ-RTR — только tun0; на BR-RTR — tun0 и порт к BR-FW; на BR-FW — только порт к BR-RTR.
+- **OSPF:** область 0, MD5-ключ `P@ssw0rd`, на HQ-RTR и BR-RTR только интерфейс туннеля tun0; сети офисов анонсируются.
 - **VLAN на HQ-SRV и HQ-CLI:** скрипты сами определяют, кто ставит тег — гипервизор или ВМ.
 - **HQ-SRV:** RAID5 `/dev/md0` из трёх дисков → `/raid5`, NFS `/raid5/nfs`, atop каждые 2 минуты, fail2ban 5 попыток → бан на 10 минут, УЦ на ГОСТ (сертификаты на 30 дней).
 - **ISP:** chrony stratum 4, обратный прокси `web.tkhis.pro` (логин `WEB` / `P@ssw0rd`) и `docker.tkhis.pro`.

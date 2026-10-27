@@ -6,21 +6,20 @@
 #       часовой пояс
 #   М2: проброс 8080 -> BR-SRV:8080 и 2027 -> BR-SRV:2027, NTP-клиент,
 #       SSH 2027 и Python для Ansible
-#  Схема филиала: ISP — BR-RTR [enp7s2 192.168.1.1/30] — BR-FW — BR-SRV
-#  Запуск: после isp.sh (лучше после hq-rtr.sh), с консоли ВМ. Затем br-fw.sh.
+#  Схема филиала: ISP — BR-RTR [enp7s2 192.168.0.1/29] — BR-SRV 192.168.0.2/29 (без BR-FW)
+#  Запуск: после isp.sh (лучше после hq-rtr.sh), с консоли ВМ.
 # =============================================================================
 
 # ---------------------------- ПАРАМЕТРЫ --------------------------------------
 HOST_FQDN="br-rtr.tkhis.pro"
 TZ_NAME="Asia/Krasnoyarsk"
 IF_WAN="enp7s1"                 # к ISP
-IF_LAN="enp7s2"                 # к BR-FW
+IF_LAN="enp7s2"                 # к BR-SRV
 WAN_IP="172.16.2.2/28"; WAN_GW="172.16.2.1"
-LAN_IP="192.168.1.1/30"; LAN_NET="192.168.1.0/30"   # к BR-FW, маска минимальная (BR-FW = .2)
+LAN_IP="192.168.0.1/29"; LAN_NET="192.168.0.0/29"   # сеть BR-SRV: не более 8 адресов
 TUN_LOCAL="172.16.2.2"; TUN_REMOTE="172.16.1.2"; TUN_IP="10.10.10.2/30"
 OSPF_KEY="P@ssw0rd"
-BR_SRV="192.168.0.2"            # за BR-FW (сеть 192.168.0.0/29 приходит по OSPF)
-BR_FW="192.168.1.2"             # сосед OSPF
+BR_SRV="192.168.0.2"
 HQ_NET="192.168.100.0/28"       # для проверки маршрутов
 NTP_SRV="172.16.2.1"
 SSH_PORT="2027"
@@ -328,7 +327,7 @@ step "User $ADMIN_USER (passwordless sudo)"
 create_user "$ADMIN_USER" "" "$ADMIN_PASS"
 install_sudoers "$ADMIN_USER" "$ADMIN_USER ALL=(ALL:ALL) NOPASSWD: ALL"
 
-step "OSPF (FRR) - via tun0 and $IF_LAN (BR-FW), MD5"
+step "OSPF (FRR) - only on tun0, MD5"
 pkg_install frr
 backup /etc/frr/daemons
 sed -i -E 's/^ospfd=.*/ospfd=yes/' /etc/frr/daemons
@@ -341,12 +340,6 @@ log syslog informational
 !
 interface tun0
  ip ospf network point-to-point
- ip ospf mtu-ignore
- ip ospf authentication message-digest
- ip ospf message-digest-key 1 md5 $OSPF_KEY
- no ip ospf passive
-!
-interface $IF_LAN
  ip ospf mtu-ignore
  ip ospf authentication message-digest
  ip ospf message-digest-key 1 md5 $OSPF_KEY
@@ -403,5 +396,4 @@ vtysh -c "show ip ospf neighbor" || true
 echo "Waiting for HQ routes via OSPF (up to 30 s)..."
 for i in $(seq 1 15); do ip route | grep -q "$HQ_NET" && break; sleep 2; done
 ip route | grep -q "$HQ_NET" && ok "Route to HQ learned via OSPF" || warn "No HQ routes yet - check hq-rtr and 'show ip ospf neighbor'"
-vtysh -c "show ip ospf neighbor" 2>/dev/null | grep -q "$IF_LAN" && ok "OSPF neighbor on $IF_LAN (BR-FW)" || warn "No OSPF neighbor on $IF_LAN yet - run br-fw.sh"
 echo -e "${C_G}BR-RTR is configured. Log: $LOG_FILE${C_N}"

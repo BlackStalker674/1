@@ -388,8 +388,7 @@ host-record=hq-srv.$DNS_DOMAIN,${IP_ADDR%/*}
 host-record=br-srv.$DNS_DOMAIN,$DC_IP
 # ---- Таблица 3: только записи A ----
 address=/hq-rtr.$DNS_DOMAIN/$GW
-address=/br-rtr.$DNS_DOMAIN/192.168.1.1
-address=/br-fw.$DNS_DOMAIN/192.168.0.1
+address=/br-rtr.$DNS_DOMAIN/192.168.0.1
 address=/hq-cli.$DNS_DOMAIN/192.168.200.2
 # ---- ISP: интерфейс к HQ-RTR и к BR-RTR ----
 address=/docker.$DNS_DOMAIN/172.16.1.1
