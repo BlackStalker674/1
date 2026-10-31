@@ -431,9 +431,18 @@ if ls /mnt/nfs >/dev/null 2>&1 && touch /mnt/nfs/.hq-cli-test 2>/dev/null; then
 else warn "/mnt/nfs unavailable - check export on HQ-SRV"; fi
 
 step "Yandex Browser"
-if rpm -q yandex-browser-stable >/dev/null 2>&1; then ok "Already installed"
-elif pkg_try yandex-browser-stable; then ok "Yandex Browser installed"
-else warn "Package not in repository - install from App Center or .rpm from browser.yandex.ru"; fi
+yb_installed() { rpm -qa 2>/dev/null | grep -qi '^yandex-browser'; }
+if yb_installed; then ok "Already installed: $(rpm -qa | grep -i '^yandex-browser' | head -1)"
+elif pkg_try yandex-browser-stable; then ok "Yandex Browser installed from repository"
+else
+  # В репозитории ALT пакета может не быть — ставим штатным для ALT способом: epm play
+  command -v epm >/dev/null 2>&1 || pkg_try eepm || true
+  if command -v epm >/dev/null 2>&1; then
+    epm --auto play yandex-browser </dev/null || epm --auto play yandex-browser-stable </dev/null || true
+  fi
+  yb_installed && ok "Yandex Browser installed via epm play" \
+    || warn "Yandex Browser not installed - try: epm play yandex-browser (or App Center)"
+fi
 
 # ============================== МОДУЛЬ 3 =====================================
 step "Printer PDF from HQ-SRV as default"

@@ -41,3 +41,4 @@ ISP: внешний интерфейс получает адрес по DHCP; 17
 - **VLAN на HQ-SRV и HQ-CLI:** скрипты сами определяют, кто ставит тег — гипервизор или ВМ.
 - **HQ-SRV:** RAID5 `/dev/md0` из трёх дисков → `/raid5`, NFS `/raid5/nfs`, atop каждые 2 минуты, fail2ban 5 попыток → бан на 10 минут, УЦ на ГОСТ (сертификаты на 30 дней).
 - **ISP:** chrony stratum 4, обратный прокси `web.tkhis.pro` (логин `WEB` / `P@ssw0rd`) и `docker.tkhis.pro`.
+- **Яндекс Браузер на HQ-CLI:** ставит `hq-cli.sh`; вручную — под root: `apt-get update && apt-get install -y yandex-browser-stable`, а если пакета нет — `epm play yandex-browser`.
